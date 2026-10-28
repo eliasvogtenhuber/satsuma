@@ -35,6 +35,9 @@ public sealed class DragWatcher : IDisposable
     private IntPtr _mouseHook;
     private IntPtr _keyboardHook;
 
+    /// <summary>Bound keys currently held, so auto-repeat can be told from a new press.</summary>
+    private readonly HashSet<int> _heldKeys = new();
+
     private bool _buttonDown;
     private bool _dragging;
     private POINT _origin;
@@ -146,6 +149,7 @@ public sealed class DragWatcher : IDisposable
                     var wasDragging = _dragging;
                     _buttonDown = false;
                     _dragging = false;
+                    _heldKeys.Clear();
 
                     // The drop itself is reported by the wheel window, which gets the
                     // real data object. This only matters for a drag released elsewhere.
@@ -184,6 +188,13 @@ public sealed class DragWatcher : IDisposable
                 }
                 else if (_keyMap.TryGetValue(key, out var wheel))
                 {
+                    // Holding a key makes Windows repeat its key-down about thirty times
+                    // a second. Each repeat used to be treated as a fresh request for a
+                    // wheel, which rebuilt it and wiped whatever was hovered. Only the
+                    // first press counts; the repeats are still swallowed so nothing
+                    // underneath sees them either.
+                    if (!_heldKeys.Add(key)) return Swallow;
+
                     Log.Write($"bound key 0x{key:X2} -> {wheel}, dragging={_dragging}");
 
                     // A drag has to be in flight. Without that check, pressing the key
@@ -203,10 +214,14 @@ public sealed class DragWatcher : IDisposable
             }
             else if (message is WM_KEYUP or WM_SYSKEYUP)
             {
+                var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+                var key = (int)data.vkCode;
+
+                var wasHeld = _heldKeys.Remove(key);
+
                 // The matching key-up is swallowed too, or an app sees a release with no
                 // press and can latch a modifier on.
-                var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-                if (_dragging && _keyMap.ContainsKey((int)data.vkCode)) return Swallow;
+                if (wasHeld || (_dragging && _keyMap.ContainsKey(key))) return Swallow;
             }
         }
 

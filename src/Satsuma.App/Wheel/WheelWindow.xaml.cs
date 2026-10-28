@@ -170,6 +170,11 @@ public partial class WheelWindow : Window
     {
         var firstShow = !IsVisible;
 
+        // Asking again for the wheel already on screen is not a request for anything.
+        // Rebuilding on it would throw away the selection under the pointer, which is
+        // what made a held key strobe the wheel.
+        if (!firstShow && kind == _kind) return;
+
         _kind = kind;
 
         if (firstShow)
@@ -222,7 +227,11 @@ public partial class WheelWindow : Window
             ? _parentItem.Children
             : _runner.BuildWheel(_kind, _category, _files);
 
-        _hoverIndex = -1;
+        // Keep whatever is under the pointer if it still exists. A rebuild happens when
+        // the real dragged paths arrive, and dropping the selection there would blink the
+        // pane out for a frame just as the user is aiming at it.
+        if (_hoverIndex >= _items.Count) _hoverIndex = -1;
+
         Render();
         UpdateHub();
     }

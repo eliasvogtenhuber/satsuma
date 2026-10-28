@@ -363,6 +363,10 @@ public partial class WheelWindow : Window
         _outerRadius = Math.Min(width, height) / 2 - 14;
         _innerRadius = Hub.Width / 2 + 16;
 
+        Diagnostics.Log.Write(
+            $"render: size={width:0.#}x{height:0.#} centre={_centre.X:0.#},{_centre.Y:0.#} " +
+            $"inner={_innerRadius:0.#} outer={_outerRadius:0.#} items={_items.Count}");
+
         if (_outerRadius <= _innerRadius) return;
 
         // The catcher is what the OS sees, so the whole disc is one hit target and a pane
@@ -578,32 +582,13 @@ public partial class WheelWindow : Window
     /// Which slice the pointer is leaning towards, or -1 for the hub, which means cancel
     /// or go back.
     /// </summary>
-    private int IndexAt(Point position)
-    {
-        if (_items.Count == 0) return -1;
-
-        var dx = position.X - _centre.X;
-        var dy = position.Y - _centre.Y;
-        var distance = Math.Sqrt(dx * dx + dy * dy);
-
-        // Hysteresis: the band that keeps a selection is wider than the band that starts
-        // one. Without it, a pointer resting near either rim crosses the threshold on
-        // sub-pixel jitter and the selection strobes on and off.
-        var alreadySelected = _hoverIndex >= 0;
-        var slack = alreadySelected ? 18.0 : 0.0;
-
-        if (distance < _innerRadius - slack) return -1;
-        if (distance > _outerRadius + 4 + slack) return -1;
-
-        // Back to degrees clockwise from straight up.
-        var angle = Math.Atan2(dy, dx) * 180.0 / Math.PI + 90;
-        if (angle < 0) angle += 360;
-        if (angle >= 360) angle -= 360;
-
-        var sweep = 360.0 / _items.Count;
-        var index = (int)(angle / sweep);
-        return Math.Clamp(index, 0, _items.Count - 1);
-    }
+    private int IndexAt(Point position) => WheelHitTest.IndexAt(
+        position.X - _centre.X,
+        position.Y - _centre.Y,
+        _innerRadius,
+        _outerRadius,
+        _items.Count,
+        _hoverIndex);
 
     private void ApplyHover(int index)
     {

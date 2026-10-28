@@ -172,7 +172,8 @@ started. If nothing appears at all, the drag began in an elevated window; see
 dotnet run --project tests/Satsuma.SelfTest -c Release
 ```
 
-The self-test generates sample files and drives the real engine over them, checking that a
+The self-test covers the wheel's hit testing as pure geometry, then generates sample
+files and drives the real engine over them, checking that a
 resize really halves the pixels, that a rotate really swaps the axes, that compressing
 really shrinks the file, and that the wheel hides what it cannot do. It skips the ffmpeg
 half cleanly when ffmpeg is absent. The drag itself cannot be scripted, so everything

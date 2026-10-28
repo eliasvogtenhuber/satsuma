@@ -36,6 +36,7 @@ internal static class Program
 
         try
         {
+            TestHitTesting();
             await TestWheelBuilding(workspace);
             await TestImages(workspace);
             await TestImageTools(workspace);
@@ -67,6 +68,78 @@ internal static class Program
         Console.WriteLine($"Output left in {workspace}");
 
         return _failed == 0 ? 0 : 1;
+    }
+
+    // ---- Hit testing ------------------------------------------------------
+
+    /// <summary>
+    /// The behaviour behind the hover flicker. A real pointer cannot test this, because
+    /// the person's own mouse moves during the run, so it is driven as pure geometry.
+    /// </summary>
+    private static void TestHitTesting()
+    {
+        Section("Wheel hit testing");
+
+        const double inner = 62, outer = 160;
+        const int count = 6;      // 60 degrees per pane
+        const int none = WheelHitTest.None;
+
+        // A point at a given angle (degrees clockwise from up) and radius.
+        static (double X, double Y) At(double degrees, double radius)
+        {
+            var radians = (degrees - 90) * Math.PI / 180.0;
+            return (radius * Math.Cos(radians), radius * Math.Sin(radians));
+        }
+
+        static int Probe(double degrees, double radius, int current)
+        {
+            var (x, y) = At(degrees, radius);
+            return WheelHitTest.IndexAt(x, y, inner, outer, count, current);
+        }
+
+        Check("hub selects nothing", Probe(30, 20, none) == none, "inside the inner radius");
+        Check("beyond the rim selects nothing", Probe(30, 400, none) == none, "past the outer radius");
+
+        Check("pane 0 is the first 60 degrees", Probe(30, 110, none) == 0, "30 degrees picks pane 0");
+        Check("pane 1 follows it", Probe(90, 110, none) == 1, "90 degrees picks pane 1");
+        Check("pane 5 wraps round", Probe(330, 110, none) == 5, "330 degrees picks pane 5");
+
+        // The flicker: a hand resting on a boundary, crossing it by a degree or two.
+        var flips = 0;
+        var held = Probe(58, 110, none);
+        for (var i = 0; i < 60; i++)
+        {
+            var next = Probe(i % 2 == 0 ? 58 : 62, 110, held);
+            if (next != held) flips++;
+            held = next;
+        }
+        Check("tremor across a pane boundary does not strobe", flips == 0,
+            $"{flips} changes over 60 crossings of the 60 degree line");
+
+        // The same at the outer rim, which is the other hard line.
+        flips = 0;
+        held = Probe(30, 155, none);
+        for (var i = 0; i < 60; i++)
+        {
+            var next = Probe(30, i % 2 == 0 ? 158 : 168, held);
+            if (next != held) flips++;
+            held = next;
+        }
+        Check("tremor across the outer rim does not strobe", flips == 0,
+            $"{flips} changes over 60 crossings of the rim");
+
+        // Hysteresis must not become stickiness: a deliberate move still lands.
+        Check("a deliberate move to the next pane lands",
+            Probe(95, 110, 0) == 1, "35 degrees past the boundary switches");
+        Check("a deliberate move to the hub lands",
+            Probe(30, 20, 0) == none, "well inside the hub releases");
+        Check("leaving the wheel entirely releases",
+            Probe(30, 400, 0) == none, "well past the rim releases");
+
+        // Two panes meet at 180 degrees on a two-item wheel; the wrap must not confuse it.
+        Check("wrap across the top is handled",
+            WheelHitTest.DegreesOutside(359, 0, 60) < WheelHitTest.DegreesOutside(200, 0, 60),
+            "359 degrees is nearer pane 0 than 200 degrees is");
     }
 
     // ---- Wheel ------------------------------------------------------------

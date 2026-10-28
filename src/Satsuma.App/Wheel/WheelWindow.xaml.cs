@@ -586,8 +586,14 @@ public partial class WheelWindow : Window
         var dy = position.Y - _centre.Y;
         var distance = Math.Sqrt(dx * dx + dy * dy);
 
-        if (distance < _innerRadius) return -1;
-        if (distance > _outerRadius + 4) return -1;
+        // Hysteresis: the band that keeps a selection is wider than the band that starts
+        // one. Without it, a pointer resting near either rim crosses the threshold on
+        // sub-pixel jitter and the selection strobes on and off.
+        var alreadySelected = _hoverIndex >= 0;
+        var slack = alreadySelected ? 18.0 : 0.0;
+
+        if (distance < _innerRadius - slack) return -1;
+        if (distance > _outerRadius + 4 + slack) return -1;
 
         // Back to degrees clockwise from straight up.
         var angle = Math.Atan2(dy, dx) * 180.0 / Math.PI + 90;
@@ -603,17 +609,15 @@ public partial class WheelWindow : Window
     {
         var byDensity = _settings.SelectionStyle == SelectionStyle.Density;
 
-        // Deepening the frost only applies to the chosen slice, so the stronger blur is
-        // clipped to it and hidden the moment nothing is chosen.
-        if (!byDensity && index >= 0 && index < _sliceShapes.Count)
-        {
-            BackdropDeep.Clip = _sliceShapes[index].Data;
-            BackdropDeep.Visibility = Visibility.Visible;
-        }
-        else
-        {
-            BackdropDeep.Visibility = Visibility.Collapsed;
-        }
+        // Deepening the frost only applies to the chosen pane, so the harder blur is
+        // clipped to it and clipped away to nothing when there is no selection.
+        //
+        // Clipped rather than collapsed on purpose: collapsing throws away the bitmap
+        // cache, so the hard blur would be recomputed on the next hover. Moving the clip
+        // on a cached layer costs nothing.
+        BackdropDeep.Clip = !byDensity && index >= 0 && index < _sliceShapes.Count
+            ? _sliceShapes[index].Data
+            : Geometry.Empty;
 
         for (var i = 0; i < _sliceShapes.Count; i++)
         {
@@ -645,6 +649,8 @@ public partial class WheelWindow : Window
     private void SetHover(int index)
     {
         if (index == _hoverIndex) return;
+
+        Diagnostics.Log.Write($"hover {_hoverIndex} -> {index}");
 
         _hoverIndex = index;
         ApplyHover(index);

@@ -37,8 +37,14 @@
         </Path>
 
         <!-- The frost: a photograph of what the wheel covers, blurred, clipped to the
-             panes. -->
-        <Image x:Name="Backdrop" Stretch="Fill" IsHitTestVisible="False">
+             panes.
+
+             Both layers are bitmap-cached. The capture never changes while the wheel is
+             open, so the blur is worth computing once: without the cache, every change of
+             Clip re-runs a large Gaussian over the whole window, and moving between panes
+             drops frames badly enough to read as flicker. -->
+        <Image x:Name="Backdrop" Stretch="Fill" IsHitTestVisible="False"
+               CacheMode="BitmapCache">
             <Image.Effect>
                 <BlurEffect Radius="24" KernelType="Gaussian" RenderingBias="Performance" />
             </Image.Effect>
@@ -46,9 +52,13 @@
 
         <!-- The same photograph blurred much harder, clipped to whichever pane is
              selected. Deepening the frost is how a selection reads when no accent colour
-             is doing the work. -->
+             is doing the work.
+
+             Kept loaded rather than collapsed, so selecting a pane only moves a clip on
+             an already-rendered layer instead of forcing the hard blur to be computed
+             again from nothing. -->
         <Image x:Name="BackdropDeep" Stretch="Fill" IsHitTestVisible="False"
-               Visibility="Collapsed">
+               CacheMode="BitmapCache">
             <Image.Effect>
                 <BlurEffect Radius="76" KernelType="Gaussian" RenderingBias="Performance" />
             </Image.Effect>

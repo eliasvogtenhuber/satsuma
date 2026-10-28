@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Satsuma.Core uses WIC through WPF's imaging types, so its consumers need the
+         desktop framework reference even when they draw nothing. -->
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Satsuma.SelfTest</RootNamespace>
+    <AssemblyName>Satsuma.SelfTest</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Satsuma.Core\Satsuma.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <SatsumaVersion>0.1.0</SatsumaVersion>
+    <Version>$(SatsumaVersion)</Version>
+    <Company>Satsuma</Company>
+    <Product>Satsuma</Product>
+    <Copyright>Satsuma contributors</Copyright>
+  </PropertyGroup>
+</Project>

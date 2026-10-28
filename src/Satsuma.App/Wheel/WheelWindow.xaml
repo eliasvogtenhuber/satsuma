@@ -1,0 +1,84 @@
+<Window x:Class="Satsuma.App.Wheel.WheelWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Satsuma"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="{x:Null}"
+        ShowActivated="False"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ResizeMode="NoResize"
+        SnapsToDevicePixels="True"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Ideal"
+        FontFamily="Segoe UI Variable Text, Segoe UI"
+        Width="348" Height="348">
+
+    <!-- Background is deliberately null rather than Transparent. A transparent brush is
+         still hit-testable in WPF, which would make the whole square swallow the drag;
+         null lets everything outside the painted ring pass through to what is underneath. -->
+
+    <Grid x:Name="RootGrid" Background="{x:Null}">
+
+        <!-- Lifts the disc off the desktop. The backdrop covers this exactly, so only the
+             spill past the edge is ever seen. The window is a little larger than the disc
+             purely to leave this room to fall. -->
+        <Ellipse x:Name="ShadowDisc" Fill="#B3000000"
+                 HorizontalAlignment="Center" VerticalAlignment="Center"
+                 IsHitTestVisible="False">
+            <Ellipse.Effect>
+                <DropShadowEffect BlurRadius="26" ShadowDepth="4" Direction="270"
+                                  Opacity="0.5" Color="#000000" />
+            </Ellipse.Effect>
+        </Ellipse>
+
+        <!-- The frosted backdrop: a photograph of whatever the wheel is covering, blurred.
+             Clipped to the disc in code, so the corners of the window stay truly empty. -->
+        <Image x:Name="Backdrop" Stretch="Fill" IsHitTestVisible="False">
+            <Image.Effect>
+                <BlurEffect Radius="30" KernelType="Gaussian" RenderingBias="Performance" />
+            </Image.Effect>
+        </Image>
+
+        <!-- Slices, labels, rim lights and the hit catcher are generated in code, because
+             a radial layout is geometry rather than markup. -->
+        <Canvas x:Name="SegmentLayer" Background="{x:Null}" />
+
+        <!-- The hub: what is being dragged, and what is about to happen to it. -->
+        <Grid x:Name="Hub" Width="96" Height="96"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              IsHitTestVisible="False">
+
+            <!-- Darker than the ring so the centre reads as a well, not another slice. -->
+            <Ellipse Fill="#A6000000" />
+            <Ellipse>
+                <Ellipse.Fill>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Offset="0" Color="#1FFFFFFF" />
+                        <GradientStop Offset="0.55" Color="#00FFFFFF" />
+                    </LinearGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+            <Ellipse Stroke="#3DFFFFFF" StrokeThickness="1" />
+
+            <StackPanel VerticalAlignment="Center" Margin="9,0">
+                <TextBlock x:Name="HubPrimary"
+                           Text="Satsuma"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           Foreground="#FAFAFA"
+                           TextAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="HubSecondary"
+                           Text=""
+                           FontSize="9.5"
+                           Foreground="#A8A8A8"
+                           TextAlignment="Center"
+                           Margin="0,2,0,0"
+                           TextWrapping="Wrap"
+                           MaxHeight="26" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

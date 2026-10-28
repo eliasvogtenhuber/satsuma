@@ -1,0 +1,8 @@
+<Application x:Class="Satsuma.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+    <!-- No StartupUri: Satsuma has no main window. It lives in the tray and only ever
+         shows the wheel, the progress card and the shelf. -->
+    <Application.Resources />
+</Application>

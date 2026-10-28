@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms is referenced for NotifyIcon and the folder picker only. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Satsuma.App</RootNamespace>
+    <AssemblyName>Satsuma</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon Condition="Exists('Assets\satsuma.ico')">Assets\satsuma.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Satsuma.Core\Satsuma.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The WPF SDK omits System.IO from implicit usings so that System.IO.Path does not
+         collide with System.Windows.Shapes.Path. Satsuma needs file APIs nearly
+         everywhere and draws shapes in exactly one file, so System.IO wins here and the
+         wheel qualifies Shapes.Path where it builds geometry. -->
+    <Using Include="System.IO" />
+
+    <!-- UseWindowsForms makes System.Windows.Forms and System.Drawing global, which turns
+         Point, Brush, Application, DragEventArgs and MouseEventArgs into ambiguous names
+         in every WPF file. This is a WPF app that borrows two WinForms types, so those
+         usings are file-scoped in the handful of places that want them. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Assets\satsuma.ico" CopyToOutputDirectory="PreserveNewest" Condition="Exists('Assets\satsuma.ico')" />
+  </ItemGroup>
+
+</Project>

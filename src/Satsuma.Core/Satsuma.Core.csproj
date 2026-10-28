@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <!-- WPF is referenced for WIC imaging (BitmapDecoder/BitmapEncoder) only.
+         Satsuma.Core contains no windows or controls. -->
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Satsuma.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The WPF SDK leaves System.IO out of the implicit usings, because
+         System.IO.Path would collide with System.Windows.Shapes.Path. Core draws
+         nothing, so there is no collision here and this project is all file work. -->
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+</Project>

@@ -342,10 +342,18 @@ public partial class WheelWindow : Window
     {
         var handle = new WindowInteropHelper(this).Handle;
 
+        // Kept so the cursor can be placed in window coordinates later without trusting
+        // a routed event to say where it is.
+        _bounds = bounds;
+        _scale = bounds.Width > 0 ? bounds.Width / _settings.WheelDiameter : 1.0;
+
         SetWindowPos(handle, HWND_TOPMOST,
             bounds.Left, bounds.Top, bounds.Width, bounds.Height,
             SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
+
+    private Bounds _bounds;
+    private double _scale = 1.0;
 
     // ---- Drawing ----------------------------------------------------------
 
@@ -690,8 +698,41 @@ public partial class WheelWindow : Window
 
     private void OnDragLeaveWheel(object sender, DragEventArgs e)
     {
-        SetHover(-1);
         e.Handled = true;
+
+        // DragLeave does not mean what it sounds like. WPF raises it on the window
+        // whenever the drag crosses between hit-testable elements inside it, and it
+        // bubbles, so re-rendering the selected pane is enough to produce one. Clearing
+        // the selection on every DragLeave made the pane drop out and come straight back
+        // on the next DragOver, over and over, for a pointer that never moved.
+        //
+        // So the pointer is asked where it actually is, and the selection is only given
+        // up when it has really left.
+        if (PointerIsOnWheel())
+        {
+            Diagnostics.Log.Write("drag leave ignored: pointer still on a pane");
+            return;
+        }
+
+        Diagnostics.Log.Write("drag leave: pointer has left");
+        SetHover(-1);
+    }
+
+    /// <summary>
+    /// True when the system cursor is over a pane right now, independent of whatever
+    /// routed event is being handled.
+    /// </summary>
+    private bool PointerIsOnWheel()
+    {
+        if (_scale <= 0) return false;
+        if (!GetCursorPos(out var cursor)) return false;
+
+        // Window-relative, in the device-independent units the geometry is built in.
+        var local = new Point(
+            (cursor.X - _bounds.Left) / _scale,
+            (cursor.Y - _bounds.Top) / _scale);
+
+        return IndexAt(local) >= 0;
     }
 
     private void OnDropOnWheel(object sender, DragEventArgs e)

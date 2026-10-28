@@ -77,22 +77,38 @@ public partial class WheelWindow : Window
     private static readonly Brush SliceFill = Freeze(new LinearGradientBrush(
         new GradientStopCollection
         {
-            new(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF), 0.0),
-            new(Color.FromArgb(0x1C, 0xFF, 0xFF, 0xFF), 0.5),
-            new(Color.FromArgb(0x10, 0xFF, 0xFF, 0xFF), 1.0)
+            new(Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF), 0.0),
+            new(Color.FromArgb(0x13, 0xFF, 0xFF, 0xFF), 0.5),
+            new(Color.FromArgb(0x0B, 0xFF, 0xFF, 0xFF), 1.0)
         },
         new Point(0.5, 0), new Point(0.5, 1)));
 
-    private static readonly Brush SliceHoverFill = Freeze(new LinearGradientBrush(
+    /// <summary>
+    /// Selection by density: the chosen slice thickens into a brighter pane, the way a
+    /// frosted surface does when there is more material in the way.
+    /// </summary>
+    private static readonly Brush SliceDenseFill = Freeze(new LinearGradientBrush(
         new GradientStopCollection
         {
-            new(Color.FromArgb(0xFF, 0xFF, 0xA5, 0x55), 0.0),
-            new(Color.FromArgb(0xFF, 0xEF, 0x76, 0x1C), 1.0)
+            new(Color.FromArgb(0xC4, 0xFF, 0xFF, 0xFF), 0.0),
+            new(Color.FromArgb(0x9E, 0xFF, 0xFF, 0xFF), 1.0)
+        },
+        new Point(0.5, 0), new Point(0.5, 1)));
+
+    /// <summary>
+    /// Selection by depth: the frost under the chosen slice goes much softer, and only a
+    /// little extra film is added so the edge still reads.
+    /// </summary>
+    private static readonly Brush SliceDeepFill = Freeze(new LinearGradientBrush(
+        new GradientStopCollection
+        {
+            new(Color.FromArgb(0x52, 0xFF, 0xFF, 0xFF), 0.0),
+            new(Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF), 1.0)
         },
         new Point(0.5, 0), new Point(0.5, 1)));
 
     private static readonly Brush SliceStroke = Freeze(new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)));
-    private static readonly Brush SliceHoverStroke = Freeze(new SolidColorBrush(Color.FromArgb(0x80, 0xFF, 0xD2, 0xA8)));
+    private static readonly Brush SliceHoverStroke = Freeze(new SolidColorBrush(Color.FromArgb(0x96, 0xFF, 0xFF, 0xFF)));
 
     /// <summary>The bright edge where the glass turns, inside and out.</summary>
     private static readonly Brush RimStroke = Freeze(new SolidColorBrush(Color.FromArgb(0x5E, 0xFF, 0xFF, 0xFF)));
@@ -168,6 +184,7 @@ public partial class WheelWindow : Window
                 bounds.Left, bounds.Top, bounds.Width, bounds.Height);
 
             Backdrop.Source = capture;
+            BackdropDeep.Source = capture;
             _scrim = BuildScrim(capture);
 
             Show();
@@ -227,8 +244,8 @@ public partial class WheelWindow : Window
     /// </summary>
     private static Brush BuildScrim(BitmapSource? capture)
     {
-        const byte darkest = 0x40;    // over a dark desktop: barely there
-        const byte brightest = 0x9E;  // over a white window: enough for white text
+        const byte darkest = 0x2A;    // over a dark desktop: barely there
+        const byte brightest = 0x7E;  // over a white window: enough for white text
 
         var luminance = EstimateLuminance(capture) ?? 0.35;
         var alpha = (byte)(darkest + (brightest - darkest) * Math.Clamp(luminance, 0, 1));
@@ -334,7 +351,7 @@ public partial class WheelWindow : Window
 
         _centre = new Point(width / 2, height / 2);
         _outerRadius = Math.Min(width, height) / 2 - 14;
-        _innerRadius = Hub.Width / 2 + 7;
+        _innerRadius = Hub.Width / 2 + 16;
 
         if (_outerRadius <= _innerRadius) return;
 
@@ -563,21 +580,43 @@ public partial class WheelWindow : Window
 
     private void ApplyHover(int index)
     {
+        var byDensity = _settings.SelectionStyle == SelectionStyle.Density;
+
+        // Deepening the frost only applies to the chosen slice, so the stronger blur is
+        // clipped to it and hidden the moment nothing is chosen.
+        if (!byDensity && index >= 0 && index < _sliceShapes.Count)
+        {
+            BackdropDeep.Clip = _sliceShapes[index].Data;
+            BackdropDeep.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            BackdropDeep.Visibility = Visibility.Collapsed;
+        }
+
         for (var i = 0; i < _sliceShapes.Count; i++)
         {
             var hovered = i == index;
-            _sliceShapes[i].Fill = hovered ? SliceHoverFill : SliceFill;
+
+            _sliceShapes[i].Fill = hovered
+                ? (byDensity ? SliceDenseFill : SliceDeepFill)
+                : SliceFill;
+
             _sliceShapes[i].Stroke = hovered ? SliceHoverStroke : SliceStroke;
 
             if (_labels[i] is not StackPanel stack) continue;
+
+            // A dense white pane needs dark text on it; a deepened frost stays dark
+            // enough underneath to keep the white.
+            var darkText = hovered && byDensity;
 
             for (var child = 0; child < stack.Children.Count; child++)
             {
                 if (stack.Children[child] is not TextBlock text) continue;
 
                 text.Foreground = child == 0
-                    ? (hovered ? LabelHoverFill : LabelFill)
-                    : (hovered ? HintHoverFill : HintFill);
+                    ? (darkText ? LabelHoverFill : LabelFill)
+                    : (darkText ? HintHoverFill : HintFill);
             }
         }
     }

@@ -100,6 +100,16 @@ public partial class App : Application
 
         if (flag < 0 || _wheel is null) return;
 
+        // --selection density|depth, so the two selection treatments can be compared.
+        var styleFlag = args.ToList().FindIndex(a =>
+            a.Equals("--selection", StringComparison.OrdinalIgnoreCase));
+
+        if (styleFlag >= 0 && args.Count > styleFlag + 1
+            && Enum.TryParse<SelectionStyle>(args[styleFlag + 1], true, out var style))
+        {
+            _settings.SelectionStyle = style;
+        }
+
         var kind = WheelKind.Formats;
         var pathIndex = flag + 1;
 

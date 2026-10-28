@@ -37,7 +37,17 @@
              Clipped to the disc in code, so the corners of the window stay truly empty. -->
         <Image x:Name="Backdrop" Stretch="Fill" IsHitTestVisible="False">
             <Image.Effect>
-                <BlurEffect Radius="30" KernelType="Gaussian" RenderingBias="Performance" />
+                <BlurEffect Radius="26" KernelType="Gaussian" RenderingBias="Performance" />
+            </Image.Effect>
+        </Image>
+
+        <!-- The same photograph blurred much harder, clipped to whichever slice is
+             selected. Deepening the frost is how a selection reads when there is no
+             accent colour doing the work. -->
+        <Image x:Name="BackdropDeep" Stretch="Fill" IsHitTestVisible="False"
+               Visibility="Collapsed">
+            <Image.Effect>
+                <BlurEffect Radius="72" KernelType="Gaussian" RenderingBias="Performance" />
             </Image.Effect>
         </Image>
 
@@ -50,17 +60,18 @@
               HorizontalAlignment="Center" VerticalAlignment="Center"
               IsHitTestVisible="False">
 
-            <!-- Darker than the ring so the centre reads as a well, not another slice. -->
-            <Ellipse Fill="#A6000000" />
+            <!-- Darker than the ring so the centre reads as a well, not another slice.
+                 Deliberately unstroked: an outline here sat right where the slices begin
+                 and read as crowding them. The darkness alone separates it. -->
+            <Ellipse Fill="#8A000000" />
             <Ellipse>
                 <Ellipse.Fill>
                     <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                        <GradientStop Offset="0" Color="#1FFFFFFF" />
+                        <GradientStop Offset="0" Color="#1AFFFFFF" />
                         <GradientStop Offset="0.55" Color="#00FFFFFF" />
                     </LinearGradientBrush>
                 </Ellipse.Fill>
             </Ellipse>
-            <Ellipse Stroke="#3DFFFFFF" StrokeThickness="1" />
 
             <StackPanel VerticalAlignment="Center" Margin="9,0">
                 <TextBlock x:Name="HubPrimary"

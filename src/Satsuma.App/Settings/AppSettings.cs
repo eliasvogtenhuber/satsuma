@@ -16,8 +16,21 @@ namespace Satsuma.App.Settings;
 /// Every binding is a name a person can type: "1", "Space", "F2", "Q", or a modifier name
 /// for anyone who wants the Mac behaviour and accepts what it costs.
 /// </summary>
+/// <summary>How the chosen slice is marked, now that no accent colour does it.</summary>
+public enum SelectionStyle
+{
+    /// <summary>The slice thickens into a brighter, denser pane.</summary>
+    Density,
+
+    /// <summary>The frost under the slice goes much softer.</summary>
+    Depth
+}
+
 public sealed class AppSettings
 {
+    /// <summary>How the slice under the pointer is marked.</summary>
+    public SelectionStyle SelectionStyle { get; set; } = SelectionStyle.Density;
+
     /// <summary>Pressed during a drag to open the output-format wheel.</summary>
     public string FormatsKey { get; set; } = "1";
 

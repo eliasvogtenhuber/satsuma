@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Threading;
 using Satsuma.App.Actions;
+using Satsuma.App.Diagnostics;
 using Satsuma.App.Interop;
 using Satsuma.App.Progress;
 using Satsuma.App.Settings;
@@ -44,6 +45,9 @@ public partial class App : Application
             Shutdown();
             return;
         }
+
+        Log.Enable(e.Args);
+        Log.Write("starting");
 
         DispatcherUnhandledException += OnUnhandledException;
 
@@ -140,6 +144,7 @@ public partial class App : Application
         // A guess at the selection, so the wheel opens with the right slices already on
         // it. The real paths replace this as soon as the drag reaches the wheel.
         var seed = ShellSelection.FromPoint(e.ScreenX, e.ScreenY);
+        Log.Write($"showing {e.Wheel} wheel, seed={seed.Count} file(s)");
 
         _watcher.WheelOpen = true;
         _wheel.ShowFor(e.Wheel, seed, e.ScreenX, e.ScreenY);
@@ -235,6 +240,7 @@ public partial class App : Application
     private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         // A failure in one conversion should never take the tray app down with it.
+        Log.Write($"unhandled: {e.Exception}");
         _tray?.Notify("Something went wrong", e.Exception.Message, isError: true);
         e.Handled = true;
     }

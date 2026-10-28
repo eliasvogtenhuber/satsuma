@@ -17,63 +17,59 @@
 
     <!-- Background is deliberately null rather than Transparent. A transparent brush is
          still hit-testable in WPF, which would make the whole square swallow the drag;
-         null lets everything outside the painted ring pass through to what is underneath. -->
+         null lets everything outside the painted slices pass through to what is beneath.
+
+         There is no disc. Every layer here is clipped to the union of the slice shapes
+         plus the hub, so the wheel is a ring of separate floating panes rather than a
+         plate with wedges scored into it. A full circle anywhere, whether backdrop,
+         scrim or outline, shows up as a halo around the slices and reads as crowding
+         them. -->
 
     <Grid x:Name="RootGrid" Background="{x:Null}">
 
-        <!-- Lifts the disc off the desktop. The backdrop covers this exactly, so only the
-             spill past the edge is ever seen. The window is a little larger than the disc
-             purely to leave this room to fall. -->
-        <Ellipse x:Name="ShadowDisc" Fill="#B3000000"
-                 HorizontalAlignment="Center" VerticalAlignment="Center"
-                 IsHitTestVisible="False">
-            <Ellipse.Effect>
-                <DropShadowEffect BlurRadius="26" ShadowDepth="4" Direction="270"
-                                  Opacity="0.5" Color="#000000" />
-            </Ellipse.Effect>
-        </Ellipse>
+        <!-- Lifts the panes off the desktop. Shares the slice geometry, so the shadow
+             falls around each pane rather than around a circle. -->
+        <Path x:Name="ShadowShape" Fill="#9E000000" IsHitTestVisible="False">
+            <Path.Effect>
+                <DropShadowEffect BlurRadius="22" ShadowDepth="3" Direction="270"
+                                  Opacity="0.46" Color="#000000" />
+            </Path.Effect>
+        </Path>
 
-        <!-- The frosted backdrop: a photograph of whatever the wheel is covering, blurred.
-             Clipped to the disc in code, so the corners of the window stay truly empty. -->
+        <!-- The frost: a photograph of what the wheel covers, blurred, clipped to the
+             panes. -->
         <Image x:Name="Backdrop" Stretch="Fill" IsHitTestVisible="False">
             <Image.Effect>
-                <BlurEffect Radius="26" KernelType="Gaussian" RenderingBias="Performance" />
+                <BlurEffect Radius="24" KernelType="Gaussian" RenderingBias="Performance" />
             </Image.Effect>
         </Image>
 
-        <!-- The same photograph blurred much harder, clipped to whichever slice is
-             selected. Deepening the frost is how a selection reads when there is no
-             accent colour doing the work. -->
+        <!-- The same photograph blurred much harder, clipped to whichever pane is
+             selected. Deepening the frost is how a selection reads when no accent colour
+             is doing the work. -->
         <Image x:Name="BackdropDeep" Stretch="Fill" IsHitTestVisible="False"
                Visibility="Collapsed">
             <Image.Effect>
-                <BlurEffect Radius="72" KernelType="Gaussian" RenderingBias="Performance" />
+                <BlurEffect Radius="76" KernelType="Gaussian" RenderingBias="Performance" />
             </Image.Effect>
         </Image>
 
-        <!-- Slices, labels, rim lights and the hit catcher are generated in code, because
-             a radial layout is geometry rather than markup. -->
+        <!-- Panes, labels and the hit catcher, all generated in code: a radial layout is
+             geometry rather than markup. -->
         <Canvas x:Name="SegmentLayer" Background="{x:Null}" />
 
-        <!-- The hub: what is being dragged, and what is about to happen to it. -->
-        <Grid x:Name="Hub" Width="96" Height="96"
+        <!-- The hub, made of the same glass as the panes rather than a dark well with a
+             ring around it. -->
+        <Grid x:Name="Hub" Width="92" Height="92"
               HorizontalAlignment="Center" VerticalAlignment="Center"
               IsHitTestVisible="False">
-
-            <!-- Darker than the ring so the centre reads as a well, not another slice.
-                 Deliberately unstroked: an outline here sat right where the slices begin
-                 and read as crowding them. The darkness alone separates it. -->
-            <Ellipse Fill="#8A000000" />
-            <Ellipse>
-                <Ellipse.Fill>
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                        <GradientStop Offset="0" Color="#1AFFFFFF" />
-                        <GradientStop Offset="0.55" Color="#00FFFFFF" />
-                    </LinearGradientBrush>
-                </Ellipse.Fill>
-            </Ellipse>
+            <Ellipse x:Name="HubBase" />
+            <Ellipse x:Name="HubFilm" />
 
             <StackPanel VerticalAlignment="Center" Margin="9,0">
+                <StackPanel.Effect>
+                    <DropShadowEffect BlurRadius="5" ShadowDepth="0" Opacity="0.85" Color="Black" />
+                </StackPanel.Effect>
                 <TextBlock x:Name="HubPrimary"
                            Text="Satsuma"
                            FontSize="13"
@@ -84,7 +80,7 @@
                 <TextBlock x:Name="HubSecondary"
                            Text=""
                            FontSize="9.5"
-                           Foreground="#A8A8A8"
+                           Foreground="#B0B0B0"
                            TextAlignment="Center"
                            Margin="0,2,0,0"
                            TextWrapping="Wrap"

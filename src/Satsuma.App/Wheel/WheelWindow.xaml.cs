@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Satsuma.App.Interop;
@@ -77,9 +78,9 @@ public partial class WheelWindow : Window
     private static readonly Brush SliceFill = Freeze(new LinearGradientBrush(
         new GradientStopCollection
         {
-            new(Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF), 0.0),
-            new(Color.FromArgb(0x13, 0xFF, 0xFF, 0xFF), 0.5),
-            new(Color.FromArgb(0x0B, 0xFF, 0xFF, 0xFF), 1.0)
+            new(Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF), 0.0),
+            new(Color.FromArgb(0x0D, 0xFF, 0xFF, 0xFF), 0.5),
+            new(Color.FromArgb(0x07, 0xFF, 0xFF, 0xFF), 1.0)
         },
         new Point(0.5, 0), new Point(0.5, 1)));
 
@@ -110,9 +111,6 @@ public partial class WheelWindow : Window
     private static readonly Brush SliceStroke = Freeze(new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)));
     private static readonly Brush SliceHoverStroke = Freeze(new SolidColorBrush(Color.FromArgb(0x96, 0xFF, 0xFF, 0xFF)));
 
-    /// <summary>The bright edge where the glass turns, inside and out.</summary>
-    private static readonly Brush RimStroke = Freeze(new SolidColorBrush(Color.FromArgb(0x5E, 0xFF, 0xFF, 0xFF)));
-
     private static readonly Brush LabelFill = Freeze(new SolidColorBrush(Color.FromRgb(0xF7, 0xF7, 0xF7)));
     private static readonly Brush LabelHoverFill = Freeze(new SolidColorBrush(Color.FromRgb(0x24, 0x13, 0x05)));
     private static readonly Brush HintFill = Freeze(new SolidColorBrush(Color.FromArgb(0xB3, 0xDE, 0xDE, 0xDE)));
@@ -131,6 +129,17 @@ public partial class WheelWindow : Window
         Width = settings.WheelDiameter;
         Height = settings.WheelDiameter;
         AllowDrop = true;
+
+        // The deep layer keeps a fixed ratio to the base blur, so a user who softens the
+        // glass does not lose the contrast that marks the selection.
+        if (Backdrop.Effect is BlurEffect baseBlur)
+        {
+            baseBlur.Radius = settings.EffectiveGlassBlur;
+        }
+        if (BackdropDeep.Effect is BlurEffect deepBlur)
+        {
+            deepBlur.Radius = Math.Max(settings.EffectiveGlassBlur * 3.2, 36);
+        }
 
         _dwellTimer = new DispatcherTimer
         {
@@ -231,24 +240,25 @@ public partial class WheelWindow : Window
 
     /// <summary>
     /// Centres the wheel on the pointer, nudged inwards so it never hangs off the screen.
-    /// Works in physical pixels, since that is the only coordinate space that means the
-    /// same thing on every monitor in a mixed-DPI setup.
-    /// </summary>
     /// <summary>
-    /// Picks how heavily to tint the glass, from how bright the captured backdrop is.
+    /// Picks how heavily to tint the glass, from how bright the captured backdrop is,
+    /// then applies the user's own bias.
     ///
-    /// Fixed translucency cannot work: the same wheel has to sit over a white document and
-    /// over a dark desktop, and its labels are white either way. Measuring what it covers
-    /// and leaning on the scrim only as much as that needs keeps the glass light where it
-    /// can be and legible where it must be.
+    /// One fixed translucency cannot work: the same wheel has to sit over a white document
+    /// and over a dark desktop, and its labels are white either way. Measuring what it
+    /// covers, and leaning on the scrim only as much as that needs, keeps the glass light
+    /// where it can be and legible where it must be. GlassOpacity then shifts the whole
+    /// scale to taste without flattening that behaviour.
     /// </summary>
-    private static Brush BuildScrim(BitmapSource? capture)
+    private Brush BuildScrim(BitmapSource? capture)
     {
-        const byte darkest = 0x2A;    // over a dark desktop: barely there
-        const byte brightest = 0x7E;  // over a white window: enough for white text
+        const double darkest = 0x10;    // over a dark desktop: all but absent
+        const double brightest = 0x54;  // over a white window: just enough to seat the text
 
         var luminance = EstimateLuminance(capture) ?? 0.35;
-        var alpha = (byte)(darkest + (brightest - darkest) * Math.Clamp(luminance, 0, 1));
+        var baseline = darkest + (brightest - darkest) * Math.Clamp(luminance, 0, 1);
+
+        var alpha = (byte)Math.Clamp(baseline * _settings.EffectiveGlassOpacity, 0, 255);
 
         return Freeze(new SolidColorBrush(Color.FromArgb(alpha, 0x06, 0x06, 0x09)));
     }
@@ -355,15 +365,9 @@ public partial class WheelWindow : Window
 
         if (_outerRadius <= _innerRadius) return;
 
-        ShadowDisc.Width = _outerRadius * 2;
-        ShadowDisc.Height = _outerRadius * 2;
-
-        // Confine the blurred capture to the disc. Without this the window's square
-        // corners would show a blurred rectangle hanging in mid-air.
-        Backdrop.Clip = new EllipseGeometry(_centre, _outerRadius, _outerRadius);
-
-        // The catcher is what the OS sees, so the whole disc is one hit target and a
-        // slice can be chosen by leaning towards it rather than reaching it.
+        // The catcher is what the OS sees, so the whole disc is one hit target and a pane
+        // can be chosen by leaning towards it rather than reaching it. It is invisible
+        // but solid, which is also what keeps the gaps between panes live.
         var catcher = new ShapePath
         {
             Data = new EllipseGeometry(_centre, _outerRadius, _outerRadius),
@@ -372,31 +376,42 @@ public partial class WheelWindow : Window
         };
         SegmentLayer.Children.Add(catcher);
 
-        // A scrim over the blur, weighted to what is actually behind the wheel, so white
-        // labels stay readable over a bright window and the glass stays light over a dark
-        // desktop. Without it the wheel is only legible on half the backgrounds it lands on.
-        SegmentLayer.Children.Add(new ShapePath
-        {
-            Data = new EllipseGeometry(_centre, _outerRadius, _outerRadius),
-            Fill = _scrim,
-            IsHitTestVisible = false
-        });
+        // The hub is glass too, so it joins the union and gets the same treatment.
+        var hubGeometry = new EllipseGeometry(_centre, Hub.Width / 2, Hub.Height / 2);
+        HubBase.Fill = _scrim;
+        HubFilm.Fill = SliceFill;
 
         if (_items.Count == 0)
         {
+            ApplyGlassShape(new GeometryGroup { Children = { hubGeometry } });
             UpdateHub();
             return;
         }
 
         _placements = WheelGeometry.Place(_items.Count, _innerRadius, _outerRadius);
 
+        // Everything the glass covers, so the backdrop and the shadow follow the panes
+        // instead of a circle enclosing them.
+        var union = new GeometryGroup { Children = { hubGeometry } };
+
         for (var index = 0; index < _items.Count; index++)
         {
             var placement = _placements[index];
+            var geometry = WheelGeometry.BuildSegment(_centre, placement);
+            union.Children.Add(geometry);
+
+            // The scrim sits per pane rather than over a whole disc, so the gaps show
+            // the desktop rather than a tinted halo.
+            SegmentLayer.Children.Add(new ShapePath
+            {
+                Data = geometry,
+                Fill = _scrim,
+                IsHitTestVisible = false
+            });
 
             var slice = new ShapePath
             {
-                Data = WheelGeometry.BuildSegment(_centre, placement),
+                Data = geometry,
                 Fill = SliceFill,
                 Stroke = SliceStroke,
                 StrokeThickness = 1,
@@ -412,36 +427,42 @@ public partial class WheelWindow : Window
             _labels.Add(label);
         }
 
-        AddRimLights();
+        ApplyGlassShape(union);
         ApplyHover(_hoverIndex);
     }
 
     /// <summary>
-    /// The bright edges, drawn last so they sit over the slices. These are what sell the
-    /// disc as a single pane of glass rather than a stack of separate wedges.
+    /// Points the frost and the shadow at the shape the glass actually occupies.
+    ///
+    /// Clipping to the union rather than to a circle is what removes the halo: with a
+    /// disc, the rounded corners of each pane leave crescents of tinted backdrop around
+    /// them, which read as a ring pressing in on the slices.
     /// </summary>
-    private void AddRimLights()
+    private void ApplyGlassShape(Geometry union)
     {
-        SegmentLayer.Children.Add(new ShapePath
-        {
-            Data = new EllipseGeometry(_centre, _outerRadius - 0.5, _outerRadius - 0.5),
-            Stroke = RimStroke,
-            StrokeThickness = 1,
-            IsHitTestVisible = false
-        });
-
-        SegmentLayer.Children.Add(new ShapePath
-        {
-            Data = new EllipseGeometry(_centre, _innerRadius, _innerRadius),
-            Stroke = RimStroke,
-            StrokeThickness = 1,
-            IsHitTestVisible = false
-        });
+        Backdrop.Clip = union;
+        ShadowShape.Data = union;
     }
+
+    /// <summary>
+    /// A soft dark halo behind label text.
+    ///
+    /// This is what lets the glass be as thin as it is. Without it, readability would have
+    /// to come from the scrim, and the scrim would have to be heavy enough for the worst
+    /// background the wheel might land on. Shadowing the text instead keeps that cost on
+    /// the few hundred pixels that actually need it.
+    /// </summary>
+    private static Effect BuildTextShadow() => new DropShadowEffect
+    {
+        BlurRadius = 5,
+        ShadowDepth = 0,
+        Opacity = 0.85,
+        Color = Colors.Black
+    };
 
     private FrameworkElement BuildLabel(WheelItem item, SegmentPlacement placement)
     {
-        var stack = new StackPanel { IsHitTestVisible = false };
+        var stack = new StackPanel { IsHitTestVisible = false, Effect = BuildTextShadow() };
 
         var title = new TextBlock
         {

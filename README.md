@@ -120,6 +120,9 @@ not appear.
   "FormatsKey": "1",
   "ToolsKey": "2",
   "ActionsKey": "3",
+  "SelectionStyle": "Depth",
+  "GlassOpacity": 1.0,
+  "GlassBlur": 24,
   "RevealResults": false,
   "WheelDiameter": 348,
   "RunAtLogin": false
@@ -130,9 +133,38 @@ Key names are what you would write: `"1"`, `"Space"`, `"F2"`, `"Q"`. Digits cove
 top row and the numpad. `"Shift"`, `"Ctrl"` and `"Alt"` work too, if you want the Mac
 behaviour and accept losing Explorer's copy/move for the duration of a drag.
 
+**Appearance.** `GlassOpacity` biases how solid the glass is: 1 is the default, lower is
+more see-through, higher is more opaque. It is a multiplier rather than a fixed opacity
+because Satsuma already measures what the wheel is covering and tints to suit, so one flat
+value would be too heavy over a dark desktop and too light over a white document.
+`GlassBlur` is the backdrop blur radius. `SelectionStyle` is `Depth` (the frost under the
+chosen slice goes softer) or `Density` (it thickens into a brighter pane).
+
 `RevealResults` opens Explorer on the results of every job. It is off because results land
 next to the original, which is usually the folder you were already looking at — click the
 progress card to reveal them instead.
+
+## When a drag does nothing
+
+Start Satsuma with `--debug` and it writes a trace to
+`%LOCALAPPDATA%\Satsuma\satsuma.log`. The interesting half of Satsuma runs inside global
+input hooks during another app's modal drag loop, where there is no window to print to and
+nothing to attach a debugger to, so the log is the way to see which link broke:
+
+```
+hooks installed: mouse=True, keyboard=True
+bound keys: 0x31=Formats, 0x61=Formats, 0x32=Tools, ...
+button down at 1440,810
+drag detected
+bound key 0x31 -> Formats, dragging=True
+wheel requested: Formats at 1675,928
+showing Formats wheel, seed=1 file(s)
+```
+
+If `drag detected` never appears, the pointer never passed the drag threshold. If a bound
+key is seen with `dragging=False`, the key arrived before Satsuma judged a drag to have
+started. If nothing appears at all, the drag began in an elevated window; see
+[limitations](docs/limitations.md).
 
 ## Running the tests
 

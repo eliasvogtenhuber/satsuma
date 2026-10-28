@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Windows.Threading;
+using Satsuma.App.Diagnostics;
 using Satsuma.App.Settings;
 using Satsuma.Core.Model;
 using static Satsuma.App.Interop.NativeMethods;
@@ -79,6 +80,12 @@ public sealed class DragWatcher : IDisposable
         _mouseHook = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, module, 0);
         _keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardProc, module, 0);
 
+        Log.Write($"hooks installed: mouse={_mouseHook != IntPtr.Zero}, " +
+                  $"keyboard={_keyboardHook != IntPtr.Zero}");
+        Log.Write("bound keys: " +
+                  string.Join(", ", _keyMap.Select(pair => $"0x{pair.Key:X2}={pair.Value}")));
+        Log.Write($"drag threshold: {_thresholdX}x{_thresholdY}");
+
         if (_mouseHook == IntPtr.Zero || _keyboardHook == IntPtr.Zero)
         {
             throw new InvalidOperationException(
@@ -115,6 +122,7 @@ public sealed class DragWatcher : IDisposable
                     _origin = data.pt;
                     _buttonDown = true;
                     _dragging = false;
+                    Log.Write($"button down at {_origin.X},{_origin.Y}");
                     break;
                 }
 
@@ -127,6 +135,7 @@ public sealed class DragWatcher : IDisposable
                             Math.Abs(data.pt.Y - _origin.Y) > _thresholdY)
                         {
                             _dragging = true;
+                            Log.Write("drag detected");
                         }
                     }
                     break;
@@ -175,10 +184,13 @@ public sealed class DragWatcher : IDisposable
                 }
                 else if (_keyMap.TryGetValue(key, out var wheel))
                 {
+                    Log.Write($"bound key 0x{key:X2} -> {wheel}, dragging={_dragging}");
+
                     // A drag has to be in flight. Without that check, pressing the key
                     // anywhere in Windows would throw a wheel on screen.
                     if (_dragging && GetCursorPos(out var cursor))
                     {
+                        Log.Write($"wheel requested: {wheel} at {cursor.X},{cursor.Y}");
                         Post(() => WheelRequested?.Invoke(
                             this, new DragModifierEvent(wheel, cursor.X, cursor.Y)));
 

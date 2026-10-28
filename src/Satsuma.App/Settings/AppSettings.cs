@@ -29,7 +29,7 @@ public enum SelectionStyle
 public sealed class AppSettings
 {
     /// <summary>How the slice under the pointer is marked.</summary>
-    public SelectionStyle SelectionStyle { get; set; } = SelectionStyle.Density;
+    public SelectionStyle SelectionStyle { get; set; } = SelectionStyle.Depth;
 
     /// <summary>Pressed during a drag to open the output-format wheel.</summary>
     public string FormatsKey { get; set; } = "1";
@@ -49,6 +49,29 @@ public sealed class AppSettings
 
     /// <summary>Outer diameter of the wheel, in device-independent pixels.</summary>
     public double WheelDiameter { get; set; } = 348;
+
+    /// <summary>
+    /// How solid the glass is, as a multiplier on the tint Satsuma works out for itself.
+    /// 1 is the default; lower is more see-through, higher is more opaque.
+    ///
+    /// It is a multiplier rather than a flat opacity because the tint already adapts to
+    /// what the wheel is covering: one fixed value would be too heavy over a dark desktop
+    /// and too light over a white document. This biases that judgement without replacing
+    /// it. Clamped, so the wheel can be neither made invisible nor turned into a plate.
+    /// </summary>
+    public double GlassOpacity { get; set; } = 1.0;
+
+    /// <summary>
+    /// How hard the backdrop behind the wheel is blurred, in pixels. Lower values make
+    /// what is underneath more recognisable; higher values make it more of a wash.
+    /// </summary>
+    public double GlassBlur { get; set; } = 24;
+
+    /// <summary>The <see cref="GlassOpacity"/> multiplier, kept inside sane bounds.</summary>
+    public double EffectiveGlassOpacity => Math.Clamp(GlassOpacity, 0.25, 2.5);
+
+    /// <summary>The <see cref="GlassBlur"/> radius, kept inside sane bounds.</summary>
+    public double EffectiveGlassBlur => Math.Clamp(GlassBlur, 0, 120);
 
     /// <summary>Start Satsuma when Windows starts.</summary>
     public bool RunAtLogin { get; set; }

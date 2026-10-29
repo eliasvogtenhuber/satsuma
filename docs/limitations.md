@@ -19,12 +19,24 @@ HEIF codec Windows 11 ships with. Writing it is another matter. WIC's HEIF encod
 reachable through WPF's imaging types, and ffmpeg has no usable HEIF muxer. So HEIC is
 input-only, and an image tool applied to a HEIC writes a JPG instead.
 
-## PDF, Office and document formats
+## PDF to DOCX, PPTX and XLSX
 
-Catalogued in `FormatCatalog` but not implemented, so no handler claims them and they are
-filtered off the wheel before it is drawn. Doing them properly means either bundling
-LibreOffice or detecting an install, which is a size and licensing decision worth making
-deliberately.
+Catalogued but not implemented, so no handler claims them and they are filtered off the
+wheel before it is drawn. Turning a page description back into an editable document is a
+layout reconstruction problem rather than a conversion: a PDF records where marks sit on a
+page, not that a run of them is a heading or a table cell. Anything short of reconstructing
+that produces a file which opens but looks nothing like the PDF, which is worse than not
+offering it. The same goes for the Office formats as inputs, which need LibreOffice
+detected or bundled.
+
+## Compressing a PDF rasterises it
+
+Pages are rendered and re-encoded as JPEG, so the result is pictures of the pages: a big,
+predictable reduction on the scanned and image-heavy files people actually want to shrink,
+at the cost of the text layer, so the result is no longer selectable or searchable.
+Rewriting the streams in place would keep the text but only helps on PDFs that are already
+mostly text, and those are already small. Satsuma refuses to write a result that came out
+larger than the original.
 
 ## RAR and 7z
 

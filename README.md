@@ -15,8 +15,9 @@ code is here, and the two differ wherever Windows does.
 ## Status
 
 Working and usable, but early. Images, video, audio, subtitles and archives convert today.
-PDF and Office formats are catalogued but not implemented, so they do not appear on the
-wheel yet — see [Roadmap](#roadmap).
+PDF works both ways: pages out as images or text, and images in. Office formats are
+catalogued but not implemented, so they do not appear on the wheel — see
+[Roadmap](#roadmap).
 
 ## How it works
 
@@ -73,6 +74,7 @@ Everything below is covered by the self-test suite and verified to run.
 | **Images** — JPG, PNG, WebP, HEIC, TIFF, AVIF, BMP, GIF, SVG\*, RAW\* | JPG, PNG, TIFF, BMP, GIF, WebP†, AVIF† |
 | **Video** — MP4, MOV, MKV, WebM, AVI, WMV, and more | MP4, MOV, MKV, WebM, AVI, WMV, animated GIF, MP3 |
 | **Audio** — MP3, M4A, WAV, FLAC, OGG, Opus, AIFF, WMA | MP3, M4A, WAV, FLAC, OGG, Opus, AIFF, WMA |
+| **PDF** | JPG, PNG (300 dpi, one per page), TXT, Markdown |
 | **Subtitles** — SRT, VTT, ASS | SRT†, VTT†, TXT |
 | **Archives / folders** | ZIP, TAR, GZIP, and Extract |
 
@@ -80,8 +82,7 @@ Everything below is covered by the self-test suite and verified to run.
 
 **Tools.** Images: compress, resize, rotate, flip, grayscale, strip metadata. Video:
 compress, resize, speed, rotate, remove audio, snapshot, extract audio, join. Audio:
-compress, normalise, to mono, strip tags, join. PDF tools are catalogued but not yet
-implemented.
+compress, normalise, to mono, strip tags, join. PDF: merge, split, compress.
 
 The wheel only ever shows conversions that actually work on your machine. Each one is
 claimed by a handler, and a format no handler can do is never drawn — so if ffmpeg is
@@ -229,9 +230,10 @@ anywhere else work.
 
 ## Roadmap
 
-- PDF: to DOCX, PPTX, XLSX, images, EPUB, text, Markdown; merge, split, compress
+- PDF to DOCX, PPTX and XLSX, which is layout reconstruction rather than conversion
+- PDF to EPUB
 - Office and document formats, which need LibreOffice detected or bundled
-- Images to PDF, and multi-image collages
+- Multi-image collages
 - Crop, annotate and redact, which need an editor surface rather than a wheel
 - The Windows share sheet, Tangerine's AirDrop slice — it is WinRT and wants a focused
   window to anchor to, which the wheel deliberately is not

@@ -144,6 +144,22 @@ public static class ImageCodec
         }
     }
 
+    /// <summary>
+    /// Encodes to JPEG in memory, for the PDF writers, which embed JPEG directly rather
+    /// than take a bitmap.
+    /// </summary>
+    public static byte[] EncodeToJpeg(BitmapSource image, int quality)
+    {
+        if (HasAlpha(image)) image = FlattenOntoWhite(image);
+
+        var encoder = new JpegBitmapEncoder { QualityLevel = Math.Clamp(quality, 1, 100) };
+        encoder.Frames.Add(BitmapFrame.Create(image));
+
+        using var stream = new MemoryStream();
+        encoder.Save(stream);
+        return stream.ToArray();
+    }
+
     public static BitmapSource Scale(BitmapSource image, double factor)
     {
         if (Math.Abs(factor - 1.0) < 0.0001) return image;

@@ -15,4 +15,9 @@
     <Using Include="System.IO" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Docnet.Core" Version="2.6.0" />
+    <PackageReference Include="PdfPig" Version="0.1.16" />
+  </ItemGroup>
+
 </Project>

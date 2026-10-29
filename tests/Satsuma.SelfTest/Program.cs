@@ -41,6 +41,7 @@ internal static class Program
             await TestWheelBuilding(workspace);
             await TestImages(workspace);
             await TestImageTools(workspace);
+            await TestPdf(workspace);
             await TestSubtitles(workspace);
             await TestArchives(workspace);
 
@@ -69,6 +70,191 @@ internal static class Program
         Console.WriteLine($"Output left in {workspace}");
 
         return _failed == 0 ? 0 : 1;
+    }
+
+    // ---- PDF ---------------------------------------------------------------
+
+    /// <summary>
+    /// PDF in both directions. The sample is built by Satsuma itself, from images, which
+    /// means the images-to-PDF path has to work before anything else can be tested and
+    /// nothing external has to be checked in.
+    /// </summary>
+    private static async Task TestPdf(string workspace)
+    {
+        Section("PDF");
+
+        var first = Path.Combine(workspace, "pdf-page-1.png");
+        var second = Path.Combine(workspace, "pdf-page-2.png");
+        WriteTestPng(first, 600, 800);
+        WriteTestPng(second, 600, 800);
+
+        var makePdf = Leaf(ToolCatalog.For(FileCategory.Image), "tool.img.pdf");
+        var bound = await Run(makePdf,
+            new[] { new SourceFile(first), new SourceFile(second) }, FileCategory.Image);
+
+        Check("images -> one PDF", bound.Outputs.Count == 1 && File.Exists(bound.Outputs[0]),
+            Describe(bound));
+
+        if (bound.Outputs.Count != 1) return;
+
+        var pdf = bound.Outputs[0];
+        Check("the PDF has a page per image", PdfRenderer.PageCount(pdf) == 2,
+            $"{PdfRenderer.PageCount(pdf)} pages");
+
+        // Single image through the formats wheel, which is the other way in.
+        var pdfFormat = FormatCatalog.For(FileCategory.Image).First(i => i.OutputExtension == ".pdf");
+        await RunAndCheck("one image -> PDF", pdfFormat, first, FileCategory.Image);
+
+        // Back out again, as images.
+        var toPng = FormatCatalog.For(FileCategory.Pdf).First(i => i.OutputExtension == ".png");
+        var rendered = await Run(toPng, new[] { new SourceFile(pdf) }, FileCategory.Pdf);
+
+        Check("PDF -> one PNG per page", rendered.Outputs.Count == 2, Describe(rendered));
+
+        if (rendered.Outputs.Count == 2)
+        {
+            var page = Sta(() => ImageCodec.TryDecode(rendered.Outputs[0], out _));
+            Check("rendered pages are at print resolution",
+                page is not null && page.PixelWidth > 1500,
+                page is null ? "unreadable" : $"{page.PixelWidth}x{page.PixelHeight} at 300 dpi");
+        }
+
+        var tools = ToolCatalog.For(FileCategory.Pdf);
+
+        // Split, then merge the halves back, which checks both against each other.
+        var split = await Run(Leaf(tools, "tool.pdf.split"),
+            new[] { new SourceFile(pdf) }, FileCategory.Pdf);
+
+        Check("PDF -> one file per page", split.Outputs.Count == 2, Describe(split));
+
+        if (split.Outputs.Count == 2)
+        {
+            Check("each split file holds one page",
+                PdfRenderer.PageCount(split.Outputs[0]) == 1
+                && PdfRenderer.PageCount(split.Outputs[1]) == 1,
+                "both single-page");
+
+            var merged = await Run(Leaf(tools, "tool.pdf.merge"),
+                split.Outputs.Select(p => new SourceFile(p)).ToList(), FileCategory.Pdf);
+
+            Check("merge puts them back together",
+                merged.Outputs.Count == 1 && PdfRenderer.PageCount(merged.Outputs[0]) == 2,
+                Describe(merged));
+        }
+
+        // Merge needs more than one file to mean anything.
+        var singleMerge = new JobRequest(
+            Leaf(tools, "tool.pdf.merge"), new[] { new SourceFile(pdf) }, FileCategory.Pdf);
+        Check("merge hidden for one file", !Runner.CanHandle(singleMerge), "slice hidden");
+
+        // Compression needs a PDF worth compressing: a page carrying far more pixels than
+        // its paper size needs, which is the shape of the scans people want to shrink.
+        var dense = Path.Combine(workspace, "pdf-dense.png");
+        WriteTestPng(dense, 1800, 2400, dpi: 300);
+
+        var densePdf = await Run(pdfFormat, new[] { new SourceFile(dense) }, FileCategory.Image);
+
+        if (densePdf.Outputs.Count == 1)
+        {
+            var compressed = await Run(Leaf(tools, "tool.pdf.compress.50"),
+                new[] { new SourceFile(densePdf.Outputs[0]) }, FileCategory.Pdf);
+
+            Check("compress a page-heavy PDF", compressed.Outputs.Count == 1, Describe(compressed));
+
+            if (compressed.Outputs.Count == 1)
+            {
+                var before = new FileInfo(densePdf.Outputs[0]).Length;
+                var after = new FileInfo(compressed.Outputs[0]).Length;
+
+                Check("compress shrinks it", after < before, $"{Kb(before)} -> {Kb(after)}");
+                Check("compressed PDF keeps its page",
+                    PdfRenderer.PageCount(compressed.Outputs[0]) == 1, "still one page");
+            }
+        }
+
+        // Refusing to make a file bigger is a result, not a failure.
+        var alreadySmall = await Run(Leaf(tools, "tool.pdf.compress.50"),
+            new[] { new SourceFile(pdf) }, FileCategory.Pdf);
+
+        Check("compress refuses to grow a file",
+            alreadySmall.Outputs.Count == 0 && alreadySmall.Failures.Count == 1,
+            alreadySmall.Failures.Count > 0 ? alreadySmall.Failures[0] : "wrote a bigger file");
+
+        // Text out of a PDF that has none is reported, not written as an empty file.
+        var toText = FormatCatalog.For(FileCategory.Pdf).First(i => i.OutputExtension == ".txt");
+        var text = await Run(toText, new[] { new SourceFile(pdf) }, FileCategory.Pdf);
+
+        Check("a scanned PDF reports having no text",
+            text.Outputs.Count == 0 && text.Failures.Count == 1,
+            text.Failures.Count > 0 ? text.Failures[0] : "wrote a file anyway");
+
+        await TestPdfText(workspace);
+
+        // The formats that need real layout reconstruction stay off the wheel.
+        var offered = Runner.BuildWheel(WheelKind.Formats, FileCategory.Pdf,
+            new[] { new SourceFile(pdf) });
+
+        Check("PDF wheel offers images and text",
+            offered.Any(i => i.OutputExtension == ".png")
+            && offered.Any(i => i.OutputExtension == ".txt"),
+            string.Join(", ", offered.Select(i => i.Label)));
+
+        Check("DOCX, PPTX and XLSX stay hidden",
+            !offered.Any(i => i.OutputExtension is ".docx" or ".pptx" or ".xlsx"),
+            "not offered until they can be done properly");
+    }
+
+    /// <summary>
+    /// Text extraction, against a PDF that genuinely carries text. Built here with real
+    /// text operators rather than rendered glyphs, which is the difference between a PDF
+    /// that can be read and a picture of one.
+    /// </summary>
+    private static async Task TestPdfText(string workspace)
+    {
+        var path = Path.Combine(workspace, "pdf-with-text.pdf");
+
+        var builder = new UglyToad.PdfPig.Writer.PdfDocumentBuilder();
+        var font = builder.AddStandard14Font(UglyToad.PdfPig.Fonts.Standard14Fonts.Standard14Font.Helvetica);
+
+        var first = builder.AddPage(595, 842);
+        first.AddText("Satsuma converts files.", 14,
+            new UglyToad.PdfPig.Core.PdfPoint(50, 780), font);
+        first.AddText("It does so without uploading them.", 14,
+            new UglyToad.PdfPig.Core.PdfPoint(50, 750), font);
+
+        var second = builder.AddPage(595, 842);
+        second.AddText("Second page text.", 14,
+            new UglyToad.PdfPig.Core.PdfPoint(50, 780), font);
+
+        await File.WriteAllBytesAsync(path, builder.Build());
+
+        var formats = FormatCatalog.For(FileCategory.Pdf);
+        var source = new[] { new SourceFile(path) };
+
+        var text = await Run(formats.First(i => i.OutputExtension == ".txt"), source, FileCategory.Pdf);
+        Check("PDF -> txt", text.Outputs.Count == 1, Describe(text));
+
+        if (text.Outputs.Count == 1)
+        {
+            var content = await File.ReadAllTextAsync(text.Outputs[0]);
+
+            Check("the words come through", content.Contains("Satsuma converts files"),
+                "first line recovered");
+            Check("later pages come through too", content.Contains("Second page text"),
+                "both pages read");
+        }
+
+        var markdown = await Run(formats.First(i => i.OutputExtension == ".md"), source, FileCategory.Pdf);
+        Check("PDF -> markdown", markdown.Outputs.Count == 1, Describe(markdown));
+
+        if (markdown.Outputs.Count == 1)
+        {
+            var content = await File.ReadAllTextAsync(markdown.Outputs[0]);
+
+            Check("markdown is given structure",
+                content.Contains("# pdf-with-text") && content.Contains("## Page 2"),
+                "a title and a heading per page");
+        }
     }
 
     // ---- Explorer titles --------------------------------------------------
@@ -209,10 +395,10 @@ internal static class Program
         var actions = Runner.BuildWheel(WheelKind.Actions, FileCategory.Image, image);
         Check("actions always offered", actions.Count == 6, $"{actions.Count} slices");
 
-        // Nothing writes these yet, so they must not reach the wheel.
-        var pdf = Runner.BuildWheel(WheelKind.Formats, FileCategory.Pdf,
-            new[] { new SourceFile(Path.Combine(workspace, "x.pdf")) });
-        Check("unhandled formats filtered out", pdf.Count == 0, "PDF wheel is empty");
+        // A file Satsuma knows nothing about offers nothing, rather than everything.
+        var unknown = Runner.BuildWheel(WheelKind.Formats, FileCategory.Unknown,
+            new[] { new SourceFile(Path.Combine(workspace, "x.wat")) });
+        Check("unknown files offer nothing", unknown.Count == 0, "no slices");
 
         return Task.CompletedTask;
     }
@@ -684,7 +870,7 @@ internal static class Program
     /// Writes a PNG with some structure in it, so a resize or a rotate has something to
     /// actually change and a compression has something to lose.
     /// </summary>
-    private static void WriteTestPng(string path, int width, int height)
+    private static void WriteTestPng(string path, int width, int height, int dpi = 96)
     {
         var stride = width * 4;
         var pixels = new byte[stride * height];
@@ -705,7 +891,7 @@ internal static class Program
 
         Sta(() =>
         {
-            var bitmap = BitmapSource.Create(width, height, 96, 96,
+            var bitmap = BitmapSource.Create(width, height, dpi, dpi,
                 PixelFormats.Bgra32, null, pixels, stride);
 
             ImageCodec.SaveWithWic(bitmap, path, 100);

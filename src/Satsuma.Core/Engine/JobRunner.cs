@@ -31,6 +31,9 @@ public sealed class JobRunner
     {
         new ImageFormatHandler(),
         new ImageToolHandler(),
+        new ImageToPdfHandler(),
+        new PdfFormatHandler(),
+        new PdfToolHandler(),
         new VideoFormatHandler(),
         new VideoToolHandler(),
         new AudioFormatHandler(),

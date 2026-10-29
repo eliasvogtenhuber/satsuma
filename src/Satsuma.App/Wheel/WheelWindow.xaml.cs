@@ -216,15 +216,22 @@ public partial class WheelWindow : Window
             _scrim = GlassTint.For(capture, _settings.EffectiveGlassOpacity);
             var tintMs = clock.Elapsed.TotalMilliseconds - captureMs;
 
+            // Built before the window is shown, not after. Showing first means the first
+            // painted frame is whatever the window still held from last time, which the
+            // next frame then replaces: one frame of the wrong wheel, every time.
+            //
+            // The layout does not depend on the window being visible. It is sized in
+            // device-independent units, which ApplyBounds does not change; that only
+            // changes how many physical pixels those units cover.
+            RebuildItems();
+            var buildMs = clock.Elapsed.TotalMilliseconds - captureMs - tintMs;
+
             Show();
             ApplyBounds(bounds);
-            var showMs = clock.Elapsed.TotalMilliseconds - captureMs - tintMs;
-
-            RebuildItems();
 
             Diagnostics.Log.Write(
-                $"open: capture {captureMs:0}ms, tint {tintMs:0}ms, show {showMs:0}ms, " +
-                $"build {clock.Elapsed.TotalMilliseconds - captureMs - tintMs - showMs:0}ms, " +
+                $"open: capture {captureMs:0}ms, tint {tintMs:0}ms, build {buildMs:0}ms, " +
+                $"show {clock.Elapsed.TotalMilliseconds - captureMs - tintMs - buildMs:0}ms, " +
                 $"total {clock.Elapsed.TotalMilliseconds:0}ms");
             return;
         }
@@ -370,6 +377,11 @@ public partial class WheelWindow : Window
             _committed = false;
             Backdrop.Source = null;
             BackdropDeep.Source = null;
+
+            // Render the emptiness as well. Leaving the warm-up's ring in the visual tree
+            // means it is what gets painted the next time the window is shown, before the
+            // real wheel replaces it a frame later.
+            Render();
 
             Diagnostics.Log.Write($"prewarm: {clock.Elapsed.TotalMilliseconds:0}ms");
         }

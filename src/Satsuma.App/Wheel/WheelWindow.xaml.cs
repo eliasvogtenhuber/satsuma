@@ -175,7 +175,13 @@ public partial class WheelWindow : Window
     /// </summary>
     public void ShowFor(WheelKind kind, IReadOnlyList<SourceFile> seedFiles, int screenX, int screenY)
     {
-        var firstShow = !IsVisible;
+        var firstShow = !IsVisible || _hidePending;
+
+        if (_hidePending)
+        {
+            _hideGeneration++;   // the pending hide no longer applies
+            _hidePending = false;
+        }
 
         // Asking again for the wheel already on screen is not a request for anything.
         // Rebuilding on it would throw away the selection under the pointer, which is
@@ -283,7 +289,61 @@ public partial class WheelWindow : Window
         _dwellTimer.Stop();
         IsSticky = false;
         _ignoreNextMouseUp = false;
-        if (IsVisible) Hide();
+
+        if (!IsVisible) return;
+
+        // A hidden window keeps the last surface it composed, and shows that surface
+        // again the moment it is shown, before anything new can be composed. So the
+        // wheel is emptied and parked off screen now, and only hidden once that empty
+        // state has actually been painted. Whatever the next open presents first is then
+        // nothing at all rather than the wheel that was last up.
+        //
+        // Done on the way out because a frame or two costs nothing here, where the same
+        // wait on the way in would be felt.
+        _items = Array.Empty<WheelItem>();
+        _parentRings.Clear();
+        _parentItem = null;
+        _hoverIndex = -1;
+
+        Render();
+        PositionOffScreen(_bounds);
+
+        HideOnceEmptied();
+    }
+
+    /// <summary>Pending hides, so a reopen can cancel one that has not fired yet.</summary>
+    private int _hideGeneration;
+
+    /// <summary>A hide is scheduled, so the window counts as closed already.</summary>
+    private bool _hidePending;
+
+    private void HideOnceEmptied()
+    {
+        var generation = ++_hideGeneration;
+        _hidePending = true;
+
+        // Two frames: one to compose the emptied wheel, one for it to be presented.
+        var remaining = 2;
+
+        void OnFrame(object? sender, EventArgs e)
+        {
+            if (generation != _hideGeneration)
+            {
+                CompositionTarget.Rendering -= OnFrame;
+                return;
+            }
+
+            if (--remaining > 0) return;
+
+            CompositionTarget.Rendering -= OnFrame;
+
+            if (generation != _hideGeneration) return;
+
+            _hidePending = false;
+            Hide();
+        }
+
+        CompositionTarget.Rendering += OnFrame;
     }
 
     /// <summary>
@@ -378,7 +438,6 @@ public partial class WheelWindow : Window
         }
         finally
         {
-            Hide();
             Opacity = 1;
 
             _items = Array.Empty<WheelItem>();
@@ -387,10 +446,11 @@ public partial class WheelWindow : Window
             Backdrop.Source = null;
             BackdropDeep.Source = null;
 
-            // Render the emptiness as well. Leaving the warm-up's ring in the visual tree
-            // means it is what gets painted the next time the window is shown, before the
-            // real wheel replaces it a frame later.
+            // Render the emptiness, park off screen, and hide only once that has been
+            // painted, or the warm-up ring stays as the surface the first open presents.
             Render();
+            PositionOffScreen(_bounds);
+            HideOnceEmptied();
 
             Diagnostics.Log.Write($"prewarm: {clock.Elapsed.TotalMilliseconds:0}ms");
         }

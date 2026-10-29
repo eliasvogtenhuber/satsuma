@@ -66,7 +66,7 @@ internal static class ScreenCapture
 
             if (copied && maskOverlays)
             {
-                MaskOverlays(memoryDc, x, y, width, height);
+                CloneOverGhost(memoryDc, width, height);
             }
 
             SelectObject(memoryDc, previous);
@@ -93,140 +93,43 @@ internal static class ScreenCapture
     }
 
     /// <summary>
-    /// Paints over any floating overlay that happens to sit within the captured area.
+    /// Covers the area the dragged file's ghost occupies by cloning neighbouring pixels
+    /// over it.
     ///
-    /// During a drag the system paints the dragged file's ghost as a layered window that
-    /// rides the cursor, and the wheel opens on the cursor, so the ghost always lands in
-    /// the middle of the backdrop. Blurred, it reads as a bright smear across the glass.
+    /// The ghost rides the cursor and the wheel opens on the cursor, so it always lands
+    /// in the middle of the backdrop, where the blur turns it into a bright smear. It
+    /// cannot be masked by finding its window: it is not a layered topmost window, and
+    /// widening the search to every layered window would start painting over ordinary
+    /// application windows, which are real backdrop. Windows does not publish the drag
+    /// image's bounds either.
     ///
-    /// An overlay is not part of what is behind the wheel, so its area is filled with a
-    /// tone sampled from the capture instead. The blur then has nothing to spread. This
-    /// matches on the window being layered and topmost rather than on any particular
-    /// class, so tooltips and similar transients are handled the same way.
+    /// So the centre is covered by size rather than by identity, and filled by copying
+    /// the band of capture directly above it rather than with a flat colour, so the
+    /// texture carries on through and nothing shows once blurred.
     /// </summary>
-    private static void MaskOverlays(IntPtr targetDc, int x, int y, int width, int height)
+    private static void CloneOverGhost(IntPtr targetDc, int width, int height)
     {
-        try
-        {
-            var captured = new NativeMethods.RECT
-            {
-                Left = x, Top = y, Right = x + width, Bottom = y + height
-            };
+        // Generous enough for a thumbnail and its filename label, and the hub is drawn
+        // over most of it in any case.
+        var maskWidth = Math.Min(width, (int)(width * 0.46));
+        var maskHeight = Math.Min(height, (int)(height * 0.46));
 
-            var fill = SampleBackdropTone(targetDc, width, height);
-            var brush = CreateSolidBrush(fill);
-            if (brush == IntPtr.Zero) return;
+        var left = (width - maskWidth) / 2;
+        var top = (height - maskHeight) / 2;
 
-            var overlays = OverlaysIntersecting(captured);
-            if (overlays.Count > 0)
-            {
-                Diagnostics.Log.Write(
-                    $"masked {overlays.Count} overlay(s) out of the backdrop");
-            }
+        // Take the replacement from above the masked band, or from below when the
+        // capture is too close to the top edge for that.
+        var sourceTop = top - maskHeight;
+        if (sourceTop < 0) sourceTop = top + maskHeight;
+        if (sourceTop < 0 || sourceTop + maskHeight > height) return;
 
-            try
-            {
-                foreach (var overlay in overlays)
-                {
-                    // Into capture-relative coordinates, clipped to the capture.
-                    var area = new NativeMethods.RECT
-                    {
-                        Left = Math.Max(overlay.Left, captured.Left) - x,
-                        Top = Math.Max(overlay.Top, captured.Top) - y,
-                        Right = Math.Min(overlay.Right, captured.Right) - x,
-                        Bottom = Math.Min(overlay.Bottom, captured.Bottom) - y
-                    };
-
-                    FillRect(targetDc, ref area, brush);
-                }
-            }
-            finally
-            {
-                DeleteObject(brush);
-            }
-        }
-        catch (Exception)
-        {
-            // Worst case the backdrop keeps whatever the screen copy gave it.
-        }
-    }
-
-    /// <summary>
-    /// Visible, layered, topmost windows overlapping the captured area, excluding this
-    /// process's own. Those are overlays rather than content.
-    /// </summary>
-    private static List<NativeMethods.RECT> OverlaysIntersecting(NativeMethods.RECT captured)
-    {
-        var found = new List<NativeMethods.RECT>();
-        var self = (uint)Environment.ProcessId;
-
-        NativeMethods.EnumWindows((window, _) =>
-        {
-            if (!NativeMethods.IsWindowVisible(window)) return true;
-
-            var exStyle = NativeMethods.GetWindowLong(window, NativeMethods.GWL_EXSTYLE);
-            if ((exStyle & NativeMethods.WS_EX_LAYERED) == 0) return true;
-            if ((exStyle & NativeMethods.WS_EX_TOPMOST) == 0) return true;
-
-            NativeMethods.GetWindowThreadProcessId(window, out var owner);
-            if (owner == self) return true;
-
-            if (!NativeMethods.GetWindowRect(window, out var bounds)) return true;
-
-            var overlaps = bounds.Left < captured.Right && bounds.Right > captured.Left
-                           && bounds.Top < captured.Bottom && bounds.Bottom > captured.Top;
-
-            if (overlaps) found.Add(bounds);
-            return true;
-        }, IntPtr.Zero);
-
-        return found;
-    }
-
-    /// <summary>
-    /// A colour to paint an overlay out with, taken from the corners of the capture,
-    /// which are the parts least likely to be covered by something riding the cursor.
-    /// </summary>
-    private static int SampleBackdropTone(IntPtr dc, int width, int height)
-    {
-        var inset = Math.Max(2, Math.Min(width, height) / 8);
-        var points = new[]
-        {
-            (inset, inset),
-            (width - inset, inset),
-            (inset, height - inset),
-            (width - inset, height - inset)
-        };
-
-        long red = 0, green = 0, blue = 0;
-        var counted = 0;
-
-        foreach (var (px, py) in points)
-        {
-            var colour = GetPixel(dc, px, py);
-            if (colour == -1) continue;   // CLR_INVALID
-
-            red += colour & 0xFF;
-            green += (colour >> 8) & 0xFF;
-            blue += (colour >> 16) & 0xFF;
-            counted++;
-        }
-
-        if (counted == 0) return 0x202020;
-
-        return (int)((red / counted) | ((green / counted) << 8) | ((blue / counted) << 16));
+        BitBlt(targetDc, left, top, maskWidth, maskHeight,
+            targetDc, left, sourceTop, SRCCOPY);
     }
 
     private const int SRCCOPY = 0x00CC0020;
 
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateSolidBrush(int colour);
 
-    [DllImport("gdi32.dll")]
-    private static extern int GetPixel(IntPtr hdc, int x, int y);
-
-    [DllImport("user32.dll")]
-    private static extern int FillRect(IntPtr hdc, ref NativeMethods.RECT rect, IntPtr brush);
 
     /// <summary>Include layered windows in the copy.</summary>
     private const int CAPTUREBLT = 0x40000000;

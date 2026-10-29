@@ -109,6 +109,9 @@ internal static class NativeMethods
     internal static extern IntPtr WindowFromPoint(POINT point);
 
     [DllImport("user32.dll")]
+    internal static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
     internal static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
 
     internal const uint GA_ROOT = 2;

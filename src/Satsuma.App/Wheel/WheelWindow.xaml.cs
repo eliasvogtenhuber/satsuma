@@ -234,6 +234,9 @@ public partial class WheelWindow : Window
     /// </summary>
     public bool IsSticky { get; private set; }
 
+    /// <summary>True once the wheel knows which files it is working on.</summary>
+    public bool HasFiles => _files.Count > 0;
+
     /// <summary>
     /// Opens the wheel for a click rather than a drag: it stays up after the button and
     /// the key are released, and is driven by ordinary clicking.

@@ -42,20 +42,35 @@ public static class ShellSelection
             : FromPoint(pointerX, pointerY);
     }
 
-    public static IReadOnlyList<SourceFile> FromPoint(int screenX, int screenY)
+    /// <summary>The selection of whichever window is in front.</summary>
+    public static IReadOnlyList<SourceFile> FromForeground() =>
+        FromWindow(GetForegroundWindow());
+
+    public static IReadOnlyList<SourceFile> FromPoint(int screenX, int screenY) =>
+        FromWindow(GetAncestor(WindowFromPoint(new POINT(screenX, screenY)), GA_ROOT));
+
+    /// <summary>
+    /// The selection of a specific window.
+    ///
+    /// Callers pass a window rather than a screen point wherever the wheel might already
+    /// be covering the place of interest: the wheel is topmost, so asking what is under a
+    /// point it occupies answers "the wheel".
+    /// </summary>
+    public static IReadOnlyList<SourceFile> FromWindow(IntPtr window)
     {
         try
         {
-            var hit = WindowFromPoint(new POINT(screenX, screenY));
-            var window = GetAncestor(hit, GA_ROOT);
+            if (window == IntPtr.Zero) return Array.Empty<SourceFile>();
+
+            window = GetAncestor(window, GA_ROOT);
             if (window == IntPtr.Zero) return Array.Empty<SourceFile>();
 
             var className = ClassNameOf(window);
             var isDesktop = className is "Progman" or "WorkerW";
 
             Log.Write(
-                $"selection probe at {screenX},{screenY}: hit=0x{hit.ToInt64():X} " +
-                $"root=0x{window.ToInt64():X} class={className} desktop={isDesktop}");
+                $"selection probe: root=0x{window.ToInt64():X} " +
+                $"class={className} desktop={isDesktop}");
 
             var found = Read(window, isDesktop);
             Log.Write($"selection probe found {found.Count} file(s)");

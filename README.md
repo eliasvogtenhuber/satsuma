@@ -42,10 +42,14 @@ Then:
 - **Esc** or **right-click** cancels outright.
 - The wheel stays up after you release the key, so you can take your time.
 
-**Clicking.** Hold the number key first, then click a file. The wheel opens where you
-clicked and stays there, so you can let go of everything and take your time. Click a
-slice to pick it, click the centre to go back out of a preset ring, and click away from
-the wheel or press Esc to put it away.
+**Clicking.** Select a file in Explorer and press the number key, or hold the key and
+then click a file. The wheel opens where you
+clicked and stays there, so you can let go of everything and take your time. The wheel opens where you are and stays there, so you can let go of everything and take
+your time. Click a slice to pick it, press 1, 2 or 3 to switch between the wheels, click
+the centre to go back out of a preset ring, and click away or press Esc to put it away.
+
+This only arms over Explorer and the Desktop. Everywhere else a number key belongs to
+whatever you are typing into.
 
 Results are always new files written beside the original. Satsuma never overwrites or
 moves what you dragged.

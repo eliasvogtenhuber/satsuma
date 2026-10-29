@@ -63,6 +63,16 @@ public partial class App : Application
             Log.Write($"ffmpeg located: {found}");
         });
 
+        // Reading an Explorer selection the first time sets up shell COM, which measured
+        // a couple of hundred milliseconds. Done here, on the apartment it needs, so the
+        // first wheel is not the one paying for it.
+        Task.Run(async () =>
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            await Core.Tools.StaExecutor.RunAsync(() => ShellSelection.FromForeground());
+            Log.Write($"shell COM warmed in {clock.Elapsed.TotalMilliseconds:0}ms");
+        });
+
         _tray = new TrayController(_settings);
         _tray.QuitRequested += (_, _) => Shutdown();
         _tray.ShelfRequested += (_, _) => ShowShelf();
@@ -79,7 +89,7 @@ public partial class App : Application
             _wheel?.Prewarm();
             TryProbeSelection(e.Args);
             TryShowPreview(e.Args);
-        }, DispatcherPriority.ApplicationIdle);
+        }, DispatcherPriority.Normal);
 
         _closeAfterDrag = new DispatcherTimer
         {
@@ -101,6 +111,15 @@ public partial class App : Application
             {
                 if (_wheel?.IsSticky != true) return;
                 if (_wheel.HitTestScreen(click.ScreenX, click.ScreenY)) return;
+
+                // A wheel that is open but still has nothing to work on is waiting to be
+                // told which file. Clicking one away from the wheel answers that, rather
+                // than meaning "go away".
+                if (!_wheel.HasFiles)
+                {
+                    SeedFromSelectionAsync(_wheel, click.SourceWindow, delayMs: 130);
+                    return;
+                }
 
                 CloseWheel();
             };
@@ -214,16 +233,7 @@ public partial class App : Application
         var origin = (e.OriginX, e.OriginY);
         var pointer = (e.ScreenX, e.ScreenY);
 
-        Task.Run(() => ShellSelection.ForDrag(origin.OriginX, origin.OriginY,
-                                              pointer.ScreenX, pointer.ScreenY))
-            .ContinueWith(task =>
-            {
-                if (task.IsFaulted || task.Result.Count == 0) return;
-
-                // Only a guess, and only useful if the real dragged paths have not
-                // already arrived from the drop target.
-                Dispatcher.BeginInvoke(() => wheel.SeedLate(task.Result));
-            }, TaskScheduler.Default);
+        SeedFromSelectionAsync(wheel, e.SourceWindow, delayMs: 0);
     }
 
     /// <summary>
@@ -239,17 +249,26 @@ public partial class App : Application
         _wheel.ShowForClick(e.Wheel, Array.Empty<SourceFile>(), e.ScreenX, e.ScreenY);
 
         // There is no drag data here, so the Explorer selection is the only way to learn
-        // which file was clicked, and it has to be read after the click has registered.
-        var wheel = _wheel;
-        var point = (e.ScreenX, e.ScreenY);
+        // which file this is about. Read from the window the event carried, not from a
+        // screen point, since the wheel is now covering that point.
+        SeedFromSelectionAsync(_wheel, e.SourceWindow, delayMs: 130);
+    }
 
+    /// <summary>
+    /// Reads a window's selection away from the UI thread and gives it to the wheel if it
+    /// still has nothing. The delay lets a click register as a selection first.
+    /// </summary>
+    private void SeedFromSelectionAsync(WheelWindow wheel, IntPtr sourceWindow, int delayMs)
+    {
         Task.Run(async () =>
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(130)).ConfigureAwait(false);
+            if (delayMs > 0) await Task.Delay(delayMs).ConfigureAwait(false);
 
             // Shell COM is apartment-threaded, and thread-pool threads are not.
             var files = await Core.Tools.StaExecutor
-                .RunAsync(() => ShellSelection.FromPoint(point.ScreenX, point.ScreenY))
+                .RunAsync(() => sourceWindow == IntPtr.Zero
+                    ? ShellSelection.FromForeground()
+                    : ShellSelection.FromWindow(sourceWindow))
                 .ConfigureAwait(false);
 
             if (files.Count == 0) return;

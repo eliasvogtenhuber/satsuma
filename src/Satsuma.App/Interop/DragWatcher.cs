@@ -13,7 +13,15 @@ namespace Satsuma.App.Interop;
 /// is no longer the window under the pointer.
 /// </summary>
 public sealed record DragModifierEvent(
-    WheelKind Wheel, int ScreenX, int ScreenY, int OriginX, int OriginY);
+    WheelKind Wheel, int ScreenX, int ScreenY, int OriginX, int OriginY)
+{
+    /// <summary>
+    /// The window the files are expected to come from, when it is known. Carried
+    /// explicitly because the wheel is topmost: once it is up, asking what lies under a
+    /// screen point answers "the wheel", not the Explorer window behind it.
+    /// </summary>
+    public IntPtr SourceWindow { get; init; }
+}
 
 /// <summary>
 /// Watches global input and works out when the user is dragging something and has asked
@@ -151,8 +159,10 @@ public sealed class DragWatcher : IDisposable
                         var point = data.pt;
 
                         Log.Write($"click wheel armed: {kind} at {point.X},{point.Y}");
-                        Post(() => ClickWheelRequested?.Invoke(
-                            this, new DragModifierEvent(kind, point.X, point.Y, point.X, point.Y)));
+                        var under = GetAncestor(WindowFromPoint(point), GA_ROOT);
+                        Post(() => ClickWheelRequested?.Invoke(this,
+                            new DragModifierEvent(kind, point.X, point.Y, point.X, point.Y)
+                            { SourceWindow = under }));
                     }
                     else
                     {
@@ -238,9 +248,42 @@ public sealed class DragWatcher : IDisposable
 
                     Log.Write($"bound key 0x{key:X2} -> {wheel}, dragging={_dragging}");
 
-                    // Held with no drag under way: arm the click mode and wait for a
-                    // click to say which file.
-                    if (!_dragging) _armedKind = wheel;
+                    // A wheel already on screen: the key switches which wheel it is,
+                    // rather than opening another one.
+                    if (WheelOpen)
+                    {
+                        if (GetCursorPos(out var at))
+                        {
+                            Post(() => WheelRequested?.Invoke(this,
+                                new DragModifierEvent(wheel, at.X, at.Y, at.X, at.Y)));
+                        }
+                        return Swallow;
+                    }
+
+                    // Held with no drag under way: open straight from whatever is
+                    // selected in the window in front, and stay armed in case nothing is
+                    // selected and the user is about to click a file instead.
+                    //
+                    // Only over Explorer or the Desktop. These are plain number keys, and
+                    // outside a file manager they belong to whoever is being typed into:
+                    // a wheel appearing while someone writes "1" would be indefensible.
+                    var source = GetForegroundWindow();
+
+                    if (!_dragging && IsShellWindow(source))
+                    {
+                        _armedKind = wheel;
+
+                        if (GetCursorPos(out var openAt))
+                        {
+                            Post(() => ClickWheelRequested?.Invoke(this,
+                                new DragModifierEvent(wheel, openAt.X, openAt.Y,
+                                    openAt.X, openAt.Y) { SourceWindow = source }));
+                        }
+
+                        // Swallowed, or Explorer takes it as type-ahead and jumps to a
+                        // file whose name starts with that digit.
+                        return Swallow;
+                    }
 
                     // A drag has to be in flight. Without that check, pressing the key
                     // anywhere in Windows would throw a wheel on screen.
@@ -250,7 +293,8 @@ public sealed class DragWatcher : IDisposable
                         Log.Write($"wheel requested: {wheel} at {cursor.X},{cursor.Y}");
                         Post(() => WheelRequested?.Invoke(
                             this, new DragModifierEvent(
-                                wheel, cursor.X, cursor.Y, origin.X, origin.Y)));
+                                wheel, cursor.X, cursor.Y, origin.X, origin.Y)
+                            { SourceWindow = GetAncestor(WindowFromPoint(origin), GA_ROOT) }));
 
                         // Swallowed so that an app being dragged over never sees the
                         // keystroke. Explorer ignores these keys mid-drag, but an
@@ -281,6 +325,25 @@ public sealed class DragWatcher : IDisposable
 
     /// <summary>Returning non-zero from a hook stops the key reaching anything else.</summary>
     private static readonly IntPtr Swallow = new(1);
+
+    /// <summary>
+    /// True for a File Explorer window or the Desktop. This is what keeps the
+    /// click-driven wheel from firing on a plain number key typed into something else:
+    /// outside a file manager those keys belong to whoever is being typed into.
+    /// </summary>
+    private static bool IsShellWindow(IntPtr window)
+    {
+        if (window == IntPtr.Zero) return false;
+
+        return ClassNameOf(GetAncestor(window, GA_ROOT)) switch
+        {
+            "CabinetWClass" => true,   // a File Explorer window
+            "ExploreWClass" => true,   // the older explorer frame
+            "Progman" => true,         // the Desktop
+            "WorkerW" => true,         // the Desktop with a wallpaper slideshow
+            _ => false
+        };
+    }
 
     /// <summary>
     /// Hands work to the UI thread. Hook callbacks run on the thread that installed the

@@ -194,6 +194,7 @@ public partial class WheelWindow : Window
 
         if (firstShow)
         {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             var bounds = ComputeBounds(screenX, screenY);
 
             // Photograph the desktop before the window covers it, or the frosted backdrop
@@ -201,12 +202,24 @@ public partial class WheelWindow : Window
             var capture = ScreenCapture.Capture(
                 bounds.Left, bounds.Top, bounds.Width, bounds.Height);
 
+            var captureMs = clock.Elapsed.TotalMilliseconds;
+
             Backdrop.Source = capture;
             BackdropDeep.Source = capture;
             _scrim = GlassTint.For(capture, _settings.EffectiveGlassOpacity);
+            var tintMs = clock.Elapsed.TotalMilliseconds - captureMs;
 
             Show();
             ApplyBounds(bounds);
+            var showMs = clock.Elapsed.TotalMilliseconds - captureMs - tintMs;
+
+            RebuildItems();
+
+            Diagnostics.Log.Write(
+                $"open: capture {captureMs:0}ms, tint {tintMs:0}ms, show {showMs:0}ms, " +
+                $"build {clock.Elapsed.TotalMilliseconds - captureMs - tintMs - showMs:0}ms, " +
+                $"total {clock.Elapsed.TotalMilliseconds:0}ms");
+            return;
         }
 
         RebuildItems();
@@ -216,6 +229,80 @@ public partial class WheelWindow : Window
     {
         _dwellTimer.Stop();
         if (IsVisible) Hide();
+    }
+
+    /// <summary>
+    /// Builds and renders the wheel once, off-screen and invisible, so the cost of doing
+    /// it the first time is not paid in front of the user.
+    ///
+    /// Measured, the first real open took about 1.3 seconds, over a second of which was
+    /// the first Show: creating the window, loading fonts, compiling the blur, setting up
+    /// a layered surface. Every later open took about 40ms. None of that work depends on
+    /// what is being dragged, so it can all happen at startup, where nobody is waiting.
+    /// </summary>
+    public void Prewarm()
+    {
+        if (IsVisible) return;
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            Opacity = 0;
+
+            var size = (int)Math.Round(_settings.WheelDiameter * (DpiAt(new POINT(0, 0)) / 96.0));
+
+            // Any pixels will do; this is only here to run the blur once.
+            var capture = ScreenCapture.Capture(0, 0, size, size);
+            Backdrop.Source = capture;
+            BackdropDeep.Source = capture;
+            _scrim = GlassTint.For(capture, _settings.EffectiveGlassOpacity);
+
+            // A full ring, so geometry, labels and text shadows are all exercised.
+            _items = Enumerable.Range(0, 6)
+                .Select(i => new WheelItem($"warm{i}", "WARM", WheelKind.Formats, Hint: "warming"))
+                .ToList();
+
+            Show();
+            ApplyBounds(new Bounds(-32000, -32000, size, size));
+
+            Render();
+            UpdateLayout();
+
+            // Let a real render pass complete before tearing it back down.
+            Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Log.Write($"prewarm failed: {ex.Message}");
+        }
+        finally
+        {
+            Hide();
+            Opacity = 1;
+
+            _items = Array.Empty<WheelItem>();
+            _hoverIndex = -1;
+            _committed = false;
+            Backdrop.Source = null;
+            BackdropDeep.Source = null;
+
+            Diagnostics.Log.Write($"prewarm: {clock.Elapsed.TotalMilliseconds:0}ms");
+        }
+    }
+
+    /// <summary>
+    /// Applies a guessed selection that arrived after the wheel was already up, and only
+    /// while the wheel still has nothing better. Reading the Explorer selection costs
+    /// enough that it cannot be done before showing.
+    /// </summary>
+    public void SeedLate(IReadOnlyList<SourceFile> files)
+    {
+        if (!IsVisible || _haveRealFiles || files.Count == 0) return;
+        if (_files.Count > 0) return;
+
+        SetFiles(files);
+        RebuildItems();
     }
 
     private void SetFiles(IReadOnlyList<SourceFile> files)

@@ -62,6 +62,15 @@ public partial class App : Application
         _wheel.Chosen += OnWheelChoice;
         _wheel.Dismissed += (_, _) => SetWheelClosed();
 
+        // Build and render the wheel once now, while nothing is waiting on it. Left to
+        // the first real open, this costs about a second of visible lag. Any preview
+        // follows it, so what a preview shows is what a real open looks like.
+        Dispatcher.BeginInvoke(() =>
+        {
+            _wheel?.Prewarm();
+            TryShowPreview(e.Args);
+        }, DispatcherPriority.ApplicationIdle);
+
         _closeAfterDrag = new DispatcherTimer
         {
             // Long enough for an OLE drop to be delivered and handled before the wheel is
@@ -89,7 +98,6 @@ public partial class App : Application
                 "Images work now. Install ffmpeg for video, audio, WebP and AVIF.");
         }
 
-        TryShowPreview(e.Args);
     }
 
     /// <summary>
@@ -143,13 +151,31 @@ public partial class App : Application
 
         // A guess at the selection, so the wheel opens with the right slices already on
         // it. The real paths replace this as soon as the drag reaches the wheel.
-        var seed = ShellSelection.ForDrag(e.OriginX, e.OriginY, e.ScreenX, e.ScreenY);
-        Log.Write(
-            $"showing {e.Wheel} wheel, seed={seed.Count} file(s) " +
-            $"(origin {e.OriginX},{e.OriginY})");
+        var clock = System.Diagnostics.Stopwatch.StartNew();
 
+        // The wheel goes up first, with nothing in it. Reading the Explorer selection
+        // means cross-process COM into explorer.exe, which measured around 200ms the
+        // first time -- far too long to hold the wheel back, since the wheel is supposed
+        // to appear the instant the key goes down.
         _watcher.WheelOpen = true;
-        _wheel.ShowFor(e.Wheel, seed, e.ScreenX, e.ScreenY);
+        _wheel.ShowFor(e.Wheel, Array.Empty<SourceFile>(), e.ScreenX, e.ScreenY);
+
+        Log.Write($"showing {e.Wheel} wheel in {clock.Elapsed.TotalMilliseconds:0}ms");
+
+        var wheel = _wheel;
+        var origin = (e.OriginX, e.OriginY);
+        var pointer = (e.ScreenX, e.ScreenY);
+
+        Task.Run(() => ShellSelection.ForDrag(origin.OriginX, origin.OriginY,
+                                              pointer.ScreenX, pointer.ScreenY))
+            .ContinueWith(task =>
+            {
+                if (task.IsFaulted || task.Result.Count == 0) return;
+
+                // Only a guess, and only useful if the real dragged paths have not
+                // already arrived from the drop target.
+                Dispatcher.BeginInvoke(() => wheel.SeedLate(task.Result));
+            }, TaskScheduler.Default);
     }
 
     private void OnCloseAfterDrag(object? sender, EventArgs e)

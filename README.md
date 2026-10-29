@@ -168,6 +168,14 @@ key is seen with `dragging=False`, the key arrived before Satsuma judged a drag 
 started. If nothing appears at all, the drag began in an elevated window; see
 [limitations](docs/limitations.md).
 
+## Startup
+
+Satsuma builds and renders the wheel once when it starts, off-screen and invisible. The
+first time WPF realises that window it costs around a second -- creating it, loading
+fonts, compiling the blur, setting up a layered surface -- and none of that work depends
+on what is being dragged. Paid at startup it is invisible; paid on the first drag it was a
+second of lag at exactly the wrong moment. Afterwards a wheel opens in about 40ms.
+
 ## Running the tests
 
 ```bash

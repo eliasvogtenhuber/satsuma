@@ -26,8 +26,16 @@ wheel before it is drawn. Turning a page description back into an editable docum
 layout reconstruction problem rather than a conversion: a PDF records where marks sit on a
 page, not that a run of them is a heading or a table cell. Anything short of reconstructing
 that produces a file which opens but looks nothing like the PDF, which is worse than not
-offering it. The same goes for the Office formats as inputs, which need LibreOffice
-detected or bundled.
+offering it. LibreOffice can be made to attempt it, by importing the PDF into Draw, and
+the result is a page of loose text boxes rather than a document — so Satsuma does not.
+
+Going the other way is fine, and supported: DOCX, XLSX and PPTX all convert to PDF.
+
+## Markdown out of documents
+
+LibreOffice has no Markdown export filter, so Markdown is not offered for documents even
+though it is for PDF, where the text is extracted directly. Routing it through HTML and
+converting that would work and is on the roadmap.
 
 ## Compressing a PDF rasterises it
 

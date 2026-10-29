@@ -42,6 +42,7 @@ internal static class Program
             await TestImages(workspace);
             await TestImageTools(workspace);
             await TestPdf(workspace);
+            await TestOffice(workspace);
             await TestSubtitles(workspace);
             await TestArchives(workspace);
 
@@ -70,6 +71,199 @@ internal static class Program
         Console.WriteLine($"Output left in {workspace}");
 
         return _failed == 0 ? 0 : 1;
+    }
+
+    // ---- Office ------------------------------------------------------------
+
+    /// <summary>
+    /// Documents, spreadsheets and slides. Skipped wholesale when LibreOffice is absent,
+    /// the same way the wheel hides those slices.
+    /// </summary>
+    private static async Task TestOffice(string workspace)
+    {
+        Section("Documents, spreadsheets and slides");
+
+        if (!LibreOffice.IsAvailable)
+        {
+            Skip("everything", "LibreOffice not installed");
+
+            // The important half still holds without it: nothing is offered.
+            var hidden = Runner.BuildWheel(WheelKind.Formats, FileCategory.Document,
+                new[] { new SourceFile(Path.Combine(workspace, "x.docx")) });
+
+            Check("document slices hidden without LibreOffice", hidden.Count == 0, "nothing offered");
+            return;
+        }
+
+        // A document, starting from text, which LibreOffice reads directly.
+        var txt = Path.Combine(workspace, "office-source.txt");
+        await File.WriteAllTextAsync(txt,
+            "Satsuma converts files.\r\nIt runs entirely on this machine.\r\n");
+
+        var documentFormats = FormatCatalog.For(FileCategory.Document);
+
+        var docx = await Run(documentFormats.First(i => i.OutputExtension == ".docx"),
+            new[] { new SourceFile(txt) }, FileCategory.Document);
+
+        Check("txt -> docx", docx.Outputs.Count == 1 && File.Exists(docx.Outputs[0]), Describe(docx));
+
+        if (docx.Outputs.Count == 1)
+        {
+            // A real DOCX is a zip; anything else means LibreOffice wrote something odd.
+            using var archive = System.IO.Compression.ZipFile.OpenRead(docx.Outputs[0]);
+            Check("the docx is a real Office package",
+                archive.Entries.Any(e => e.FullName == "word/document.xml"),
+                "contains word/document.xml");
+
+            var source = new[] { new SourceFile(docx.Outputs[0]) };
+
+            var pdf = await Run(documentFormats.First(i => i.OutputExtension == ".pdf"),
+                source, FileCategory.Document);
+
+            Check("docx -> pdf", pdf.Outputs.Count == 1, Describe(pdf));
+
+            if (pdf.Outputs.Count == 1)
+            {
+                Check("the pdf has a page", PdfRenderer.PageCount(pdf.Outputs[0]) >= 1,
+                    $"{PdfRenderer.PageCount(pdf.Outputs[0])} pages");
+            }
+
+            var backToText = await Run(documentFormats.First(i => i.OutputExtension == ".txt"),
+                source, FileCategory.Document);
+
+            Check("docx -> txt", backToText.Outputs.Count == 1, Describe(backToText));
+
+            if (backToText.Outputs.Count == 1)
+            {
+                var content = await File.ReadAllTextAsync(backToText.Outputs[0]);
+                Check("the words survive the round trip",
+                    content.Contains("Satsuma converts files"), "text recovered");
+            }
+
+            await RunAndCheck("docx -> html",
+                documentFormats.First(i => i.OutputExtension == ".html"),
+                docx.Outputs[0], FileCategory.Document);
+
+            await RunAndCheck("docx -> epub",
+                documentFormats.First(i => i.OutputExtension == ".epub"),
+                docx.Outputs[0], FileCategory.Document);
+        }
+
+        // A spreadsheet, starting from CSV.
+        var csv = Path.Combine(workspace, "office-sheet.csv");
+        await File.WriteAllTextAsync(csv, "Name,Size\r\nholiday.png,2048\r\nreport.pdf,4096\r\n");
+
+        var sheetFormats = FormatCatalog.For(FileCategory.Spreadsheet);
+
+        var xlsx = await Run(sheetFormats.First(i => i.OutputExtension == ".xlsx"),
+            new[] { new SourceFile(csv) }, FileCategory.Spreadsheet);
+
+        Check("csv -> xlsx", xlsx.Outputs.Count == 1, Describe(xlsx));
+
+        if (xlsx.Outputs.Count == 1)
+        {
+            var source = new[] { new SourceFile(xlsx.Outputs[0]) };
+
+            var tsv = await Run(sheetFormats.First(i => i.OutputExtension == ".tsv"),
+                source, FileCategory.Spreadsheet);
+
+            Check("xlsx -> tsv", tsv.Outputs.Count == 1, Describe(tsv));
+
+            if (tsv.Outputs.Count == 1)
+            {
+                var content = await File.ReadAllTextAsync(tsv.Outputs[0]);
+
+                // The separator is the whole point of tsv being its own slice.
+                Check("tsv really is tab separated",
+                    content.Contains('\t') && content.Contains("holiday.png"),
+                    "tabs, and the rows came through");
+            }
+
+            await RunAndCheck("xlsx -> ods",
+                sheetFormats.First(i => i.OutputExtension == ".ods"),
+                xlsx.Outputs[0], FileCategory.Spreadsheet);
+
+            await RunAndCheck("xlsx -> pdf",
+                sheetFormats.First(i => i.OutputExtension == ".pdf"),
+                xlsx.Outputs[0], FileCategory.Spreadsheet);
+        }
+
+        // A deck to test against, produced by Impress from a plain outline.
+        await TestSlides(workspace);
+    }
+
+    /// <summary>
+    /// Slides, including the image export, which is the one that goes the long way round
+    /// through PDF so that every slide comes out rather than only the first.
+    /// </summary>
+    private static async Task TestSlides(string workspace)
+    {
+        var staging = Path.Combine(workspace, "deck-staging");
+        Directory.CreateDirectory(staging);
+
+        // A deck has to come from somewhere, and a plain text outline will not do: the
+        // extension decides the import filter, so .txt is read by Writer whatever is
+        // asked for. Flat ODF is a presentation in a single XML file, which Impress reads
+        // natively, so two slides can be written here and turned into a real PPTX.
+        var flat = Path.Combine(workspace, "deck.fodp");
+        await File.WriteAllTextAsync(flat,
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <office:document
+              xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+              xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+              xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+              xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+              office:version="1.2"
+              office:mimetype="application/vnd.oasis.opendocument.presentation">
+             <office:body>
+              <office:presentation>
+               <draw:page draw:name="page1">
+                <draw:frame svg:width="20cm" svg:height="3cm" svg:x="2cm" svg:y="4cm">
+                 <draw:text-box><text:p>First slide</text:p></draw:text-box>
+                </draw:frame>
+               </draw:page>
+               <draw:page draw:name="page2">
+                <draw:frame svg:width="20cm" svg:height="3cm" svg:x="2cm" svg:y="4cm">
+                 <draw:text-box><text:p>Second slide</text:p></draw:text-box>
+                </draw:frame>
+               </draw:page>
+              </office:presentation>
+             </office:body>
+            </office:document>
+            """);
+
+        var pptx = await LibreOffice.ConvertAsync(flat, "pptx:Impress MS PowerPoint 2007 XML", staging);
+
+        if (pptx is null)
+        {
+            Skip("slides", "could not produce a deck to test with");
+            return;
+        }
+
+        var deck = Path.Combine(workspace, "deck.pptx");
+        File.Move(pptx, deck, overwrite: true);
+
+        var slideFormats = FormatCatalog.For(FileCategory.Slides);
+        var source = new[] { new SourceFile(deck) };
+
+        var pdf = await Run(slideFormats.First(i => i.OutputExtension == ".pdf"),
+            source, FileCategory.Slides);
+
+        Check("pptx -> pdf", pdf.Outputs.Count == 1, Describe(pdf));
+
+        var png = await Run(slideFormats.First(i => i.OutputExtension == ".png"),
+            source, FileCategory.Slides);
+
+        Check("pptx -> one png per slide", png.Outputs.Count == 2, Describe(png));
+
+        if (png.Outputs.Count >= 1)
+        {
+            var image = Sta(() => ImageCodec.TryDecode(png.Outputs[0], out _));
+            Check("the slide image is a real picture",
+                image is not null && image.PixelWidth > 500,
+                image is null ? "unreadable" : $"{image.PixelWidth}x{image.PixelHeight}");
+        }
     }
 
     // ---- PDF ---------------------------------------------------------------

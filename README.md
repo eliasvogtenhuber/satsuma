@@ -75,18 +75,21 @@ Everything below is covered by the self-test suite and verified to run.
 | **Video** — MP4, MOV, MKV, WebM, AVI, WMV, and more | MP4, MOV, MKV, WebM, AVI, WMV, animated GIF, MP3 |
 | **Audio** — MP3, M4A, WAV, FLAC, OGG, Opus, AIFF, WMA | MP3, M4A, WAV, FLAC, OGG, Opus, AIFF, WMA |
 | **PDF** | JPG, PNG (300 dpi, one per page), TXT, Markdown |
+| **Documents** — DOCX, DOC, ODT, RTF, TXT, HTML | DOCX‡, PDF‡, TXT‡, HTML‡, EPUB‡ |
+| **Spreadsheets** — XLSX, XLS, ODS, CSV, TSV | XLSX‡, CSV‡, TSV‡, ODS‡, PDF‡ |
+| **Slides** — PPTX, PPT, ODP | PDF‡, JPG‡, PNG‡ (one per slide) |
 | **Subtitles** — SRT, VTT, ASS | SRT†, VTT†, TXT |
 | **Archives / folders** | ZIP, TAR, GZIP, and Extract |
 
-\* read only  †  needs ffmpeg
+\* read only  †  needs ffmpeg  ‡  needs LibreOffice
 
 **Tools.** Images: compress, resize, rotate, flip, grayscale, strip metadata. Video:
 compress, resize, speed, rotate, remove audio, snapshot, extract audio, join. Audio:
 compress, normalise, to mono, strip tags, join. PDF: merge, split, compress.
 
 The wheel only ever shows conversions that actually work on your machine. Each one is
-claimed by a handler, and a format no handler can do is never drawn — so if ffmpeg is
-missing, the video wheel is honest about it instead of failing after the drop.
+claimed by a handler, and a format no handler can do is never drawn — so if ffmpeg or
+LibreOffice is missing, the wheel is honest about it instead of failing after the drop.
 
 ### HEIC
 
@@ -124,6 +127,23 @@ winget install BtbN.FFmpeg.GPL
 Satsuma finds it on `PATH`, in a `tools\` folder next to the exe, or in the usual winget
 install location. Restart Satsuma afterwards. Until it is there, those slices simply do
 not appear.
+
+### LibreOffice
+
+Documents, spreadsheets and slides go through LibreOffice:
+
+```bash
+winget install TheDocumentFoundation.LibreOffice
+```
+
+These are not formats worth reimplementing. A DOCX is a document model rather than a
+container of text, and converting one faithfully means laying it out: pagination, styles,
+tables, embedded objects. LibreOffice already does that, offline, and is the same engine
+most "convert my document" websites run server-side — the difference here being that the
+file never leaves the machine.
+
+Satsuma runs it headless under its own profile, so it does not disturb a LibreOffice you
+already have open, and finds it in the usual install locations or on `PATH`.
 
 ## Settings
 
@@ -232,7 +252,7 @@ anywhere else work.
 
 - PDF to DOCX, PPTX and XLSX, which is layout reconstruction rather than conversion
 - PDF to EPUB
-- Office and document formats, which need LibreOffice detected or bundled
+- Markdown out of documents, which LibreOffice has no export filter for
 - Multi-image collages
 - Crop, annotate and redact, which need an editor surface rather than a wheel
 - The Windows share sheet, Tangerine's AirDrop slice — it is WinRT and wants a focused

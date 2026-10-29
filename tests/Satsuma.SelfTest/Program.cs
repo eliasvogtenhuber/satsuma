@@ -36,6 +36,7 @@ internal static class Program
 
         try
         {
+            TestExplorerTitles();
             TestHitTesting();
             await TestWheelBuilding(workspace);
             await TestImages(workspace);
@@ -68,6 +69,49 @@ internal static class Program
         Console.WriteLine($"Output left in {workspace}");
 
         return _failed == 0 ? 0 : 1;
+    }
+
+    // ---- Explorer titles --------------------------------------------------
+
+    /// <summary>
+    /// Which tab an Explorer window title names. Driven directly, because the alternative
+    /// is shuffling real Explorer windows around on someone's desktop. The titles here
+    /// were taken from an actual trace, German ones included.
+    /// </summary>
+    private static void TestExplorerTitles()
+    {
+        Section("Explorer window titles");
+
+        Check("single tab, English",
+            ExplorerTitle.NamesFolder("Pictures - File Explorer", "Pictures"),
+            "'Pictures - File Explorer' names Pictures");
+
+        Check("single tab, German",
+            ExplorerTitle.NamesFolder("20261028-164631 – Datei-Explorer", "20261028-164631"),
+            "en dash and a localised suffix");
+
+        Check("several tabs names only the front one",
+            ExplorerTitle.NamesFolder(
+                "Bildschirmfotos und 3 weitere Registerkarten – Explorer", "Bildschirmfotos"),
+            "the active tab is first");
+
+        Check("a background tab is not matched",
+            !ExplorerTitle.NamesFolder(
+                "Bildschirmfotos und 3 weitere Registerkarten – Explorer", "Downloads"),
+            "Downloads is one of the other three");
+
+        // The reason the match is not a bare StartsWith.
+        Check("a shorter name does not claim a longer one",
+            !ExplorerTitle.NamesFolder("Documents - File Explorer", "Docs"),
+            "Docs must not match Documents");
+
+        Check("an exact title matches",
+            ExplorerTitle.NamesFolder("papers", "papers"),
+            "no decoration at all");
+
+        Check("nothing matches nothing",
+            !ExplorerTitle.NamesFolder("", "Pictures") && !ExplorerTitle.NamesFolder("Pictures", ""),
+            "empty on either side is no match");
     }
 
     // ---- Hit testing ------------------------------------------------------

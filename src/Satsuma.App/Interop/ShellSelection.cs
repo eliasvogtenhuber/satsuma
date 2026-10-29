@@ -104,13 +104,17 @@ public static class ShellSelection
                 $"shell views: {count}, looking for 0x{sourceWindow.ToInt64():X}, " +
                 $"apartment={Thread.CurrentThread.GetApartmentState()}");
 
-            // Pass one: the shell view whose window is the one the drag began in.
-            //
             // Every tab of a Windows 11 Explorer window reports that window's handle, so
-            // matching on the handle alone can yield half a dozen views, all but one of
-            // them an inactive tab with nothing selected. Taking the first match read the
-            // wrong tab almost every time, which is why this used to come back empty.
-            // The view that has a selection is the one the user is working in.
+            // matching on the handle alone yields one view per tab. Only the tab in front
+            // is the one the user means; the others sit on whatever they were last left
+            // on, and reading one of those opens a wheel for a file nobody is looking at.
+            //
+            // The window's title is the active tab's folder, which is what tells the
+            // views apart. Where that cannot be matched, nothing is reported rather than
+            // something wrong.
+            var activeFolder = WindowTitleOf(sourceWindow);
+            Log.Write($"active tab: '{activeFolder}'");
+
             for (var index = 0; index < count; index++)
             {
                 // Typed explicitly, not var. TryReadWindow takes a dynamic parameter, so
@@ -119,8 +123,9 @@ public static class ShellSelection
                 // an explicit interface implementation the binder cannot see. It threw on
                 // the first view that did not match, which aborted the whole scan and is
                 // why this always came back empty.
-                IReadOnlyList<SourceFile> paths =
-                    TryReadWindow(windows, index, sourceWindow, matchHandle: true);
+                IReadOnlyList<SourceFile> paths = TryReadWindow(
+                    windows, index, sourceWindow, matchHandle: true,
+                    requiredFolder: activeFolder);
 
                 if (paths.Count > 0) return paths;
             }
@@ -148,7 +153,8 @@ public static class ShellSelection
     }
 
     private static IReadOnlyList<SourceFile> TryReadWindow(
-        dynamic windows, int index, IntPtr sourceWindow, bool matchHandle)
+        dynamic windows, int index, IntPtr sourceWindow, bool matchHandle,
+        string? requiredFolder = null)
     {
         try
         {
@@ -169,6 +175,18 @@ public static class ShellSelection
             if (document is null) return Array.Empty<SourceFile>();
 
             if (!matchHandle && !IsDesktopView(document)) return Array.Empty<SourceFile>();
+
+            // Several tabs share the handle, so the folder is what identifies the one in
+            // front. Without this, an inactive tab's leftover selection wins.
+            if (requiredFolder is { Length: > 0 })
+            {
+                var folder = FolderNameOf(document);
+                var active = ExplorerTitle.NamesFolder(requiredFolder, folder);
+
+                Log.Write($"  view {index}: folder='{folder}' active={active}");
+
+                if (!active) return Array.Empty<SourceFile>();
+            }
 
             dynamic? selected = document.SelectedItems();
             if (selected is null) return Array.Empty<SourceFile>();
@@ -199,6 +217,36 @@ public static class ShellSelection
             Log.Write($"  view {index}: {ex.GetType().Name} {ex.Message}");
             return Array.Empty<SourceFile>();
         }
+    }
+
+    /// <summary>The leaf folder name a shell view is showing, for matching against a tab.</summary>
+    private static string FolderNameOf(dynamic document)
+    {
+        try
+        {
+            string? name = document.Folder?.Self?.Name as string;
+            if (!string.IsNullOrEmpty(name)) return name;
+
+            string? path = document.Folder?.Self?.Path as string;
+            return string.IsNullOrEmpty(path)
+                ? string.Empty
+                : Path.GetFileName(path.TrimEnd('\\'));
+        }
+        catch (Exception)
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// An Explorer window's title, which is the folder name of the tab in front.
+    /// </summary>
+    private static string WindowTitleOf(IntPtr window)
+    {
+        var buffer = new System.Text.StringBuilder(512);
+        return GetWindowText(window, buffer, buffer.Capacity) > 0
+            ? buffer.ToString().Trim()
+            : string.Empty;
     }
 
     private static bool IsDesktopView(dynamic document)

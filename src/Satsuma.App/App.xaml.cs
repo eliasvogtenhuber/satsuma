@@ -70,6 +70,8 @@ public partial class App : Application
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
             await Core.Tools.StaExecutor.RunAsync(() => ShellSelection.FromForeground());
+
+            _shellWarm = true;
             Log.Write($"shell COM warmed in {clock.Elapsed.TotalMilliseconds:0}ms");
         });
 
@@ -220,20 +222,20 @@ public partial class App : Application
         // it. The real paths replace this as soon as the drag reaches the wheel.
         var clock = System.Diagnostics.Stopwatch.StartNew();
 
-        // The wheel goes up first, with nothing in it. Reading the Explorer selection
-        // means cross-process COM into explorer.exe, which measured around 200ms the
-        // first time -- far too long to hold the wheel back, since the wheel is supposed
-        // to appear the instant the key goes down.
+        // Seeded before showing where that is cheap, so the wheel opens with the right
+        // slices rather than appearing empty and filling in a moment later. Cold, it is
+        // cross-process COM into explorer.exe and far too slow to hold the wheel back.
+        var upFront = _shellWarm ? ReadSelection(e.SourceWindow) : Array.Empty<SourceFile>();
+
         _watcher.WheelOpen = true;
-        _wheel.ShowFor(e.Wheel, Array.Empty<SourceFile>(), e.ScreenX, e.ScreenY);
+        _wheel.ShowFor(e.Wheel, upFront, e.ScreenX, e.ScreenY);
 
-        Log.Write($"showing {e.Wheel} wheel in {clock.Elapsed.TotalMilliseconds:0}ms");
+        Log.Write(
+            $"showing {e.Wheel} wheel in {clock.Elapsed.TotalMilliseconds:0}ms, " +
+            $"seed={upFront.Count}");
 
-        var wheel = _wheel;
-        var origin = (e.OriginX, e.OriginY);
-        var pointer = (e.ScreenX, e.ScreenY);
-
-        SeedFromSelectionAsync(wheel, e.SourceWindow, delayMs: 0);
+        // The dropped paths are what finally decide, and they arrive on the way in.
+        if (upFront.Count == 0) SeedFromSelectionAsync(_wheel, e.SourceWindow, delayMs: 0);
     }
 
     /// <summary>
@@ -246,18 +248,50 @@ public partial class App : Application
 
         _closeAfterDrag?.Stop();
         _watcher.WheelOpen = true;
-        _wheel.ShowForClick(e.Wheel, Array.Empty<SourceFile>(), e.ScreenX, e.ScreenY);
 
         // There is no drag data here, so the Explorer selection is the only way to learn
         // which file this is about. Read from the window the event carried, not from a
-        // screen point, since the wheel is now covering that point.
-        SeedFromSelectionAsync(_wheel, e.SourceWindow, delayMs: 130);
+        // screen point, since the wheel will be covering that point.
+        //
+        // Read before showing when it can be: once shell COM is warm this takes a few
+        // milliseconds, and doing it first means the wheel opens already holding the
+        // right slices. Showing an empty wheel and filling it a moment later is what
+        // produced a visible flicker on every open.
+        var upFront = _shellWarm ? ReadSelection(e.SourceWindow) : Array.Empty<SourceFile>();
+
+        _wheel.ShowForClick(e.Wheel, upFront, e.ScreenX, e.ScreenY);
+
+        // Cold, or nothing selected yet because a click is still being processed.
+        if (upFront.Count == 0) SeedFromSelectionAsync(_wheel, e.SourceWindow, delayMs: 130);
     }
 
     /// <summary>
     /// Reads a window's selection away from the UI thread and gives it to the wheel if it
     /// still has nothing. The delay lets a click register as a selection first.
     /// </summary>
+    /// <summary>Set once reading a selection no longer costs most of a second.</summary>
+    private volatile bool _shellWarm;
+
+    /// <summary>
+    /// Reads a selection on this thread. Safe because the UI thread is an STA, which is
+    /// what shell COM wants, and because it is only called once the first read has
+    /// already paid for the setup.
+    /// </summary>
+    private static IReadOnlyList<SourceFile> ReadSelection(IntPtr sourceWindow)
+    {
+        try
+        {
+            return sourceWindow == IntPtr.Zero
+                ? ShellSelection.FromForeground()
+                : ShellSelection.FromWindow(sourceWindow);
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"selection read failed: {ex.Message}");
+            return Array.Empty<SourceFile>();
+        }
+    }
+
     private void SeedFromSelectionAsync(WheelWindow wheel, IntPtr sourceWindow, int delayMs)
     {
         Task.Run(async () =>

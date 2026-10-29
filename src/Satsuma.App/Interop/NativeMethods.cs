@@ -111,6 +111,9 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern IntPtr GetForegroundWindow();
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
+
     [DllImport("user32.dll")]
     internal static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
 

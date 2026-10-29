@@ -199,8 +199,17 @@ public sealed class DragWatcher : IDisposable
                     var wasDragging = _dragging;
                     _buttonDown = false;
                     _dragging = false;
-                    _heldKeys.Clear();
                     _armedKind = null;
+
+                    // Deliberately not clearing the held keys. A key still physically
+                    // down when a drag ends keeps repeating, and wiping the record here
+                    // made the next repeat look like a fresh press, which immediately
+                    // opened a click wheel the user never asked for. The key has to be
+                    // let go before it counts again.
+                    //
+                    // Only keys that really are up are dropped, in case a key-up was
+                    // missed while another window had focus.
+                    PruneReleasedKeys();
 
                     // The drop itself is reported by the wheel window, which gets the
                     // real data object. This only matters for a drag released elsewhere.
@@ -325,6 +334,21 @@ public sealed class DragWatcher : IDisposable
 
     /// <summary>Returning non-zero from a hook stops the key reaching anything else.</summary>
     private static readonly IntPtr Swallow = new(1);
+
+    /// <summary>
+    /// Forgets held keys that are no longer physically down. A key-up can be missed when
+    /// focus moves to another window mid-gesture, and without this the key would count as
+    /// held forever and never open a wheel again.
+    /// </summary>
+    private void PruneReleasedKeys()
+    {
+        if (_heldKeys.Count == 0) return;
+
+        foreach (var key in _heldKeys.ToList())
+        {
+            if (!IsKeyDown(key)) _heldKeys.Remove(key);
+        }
+    }
 
     /// <summary>
     /// True for a File Explorer window or the Desktop. This is what keeps the

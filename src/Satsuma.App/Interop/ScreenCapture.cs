@@ -29,13 +29,13 @@ internal static class ScreenCapture
     /// overlay of any kind on it.
     /// </summary>
     public static BitmapSource? CaptureWithoutOverlays(int x, int y, int width, int height) =>
-        Capture(x, y, width, height, redrawWindowUnderCentre: true);
+        Capture(x, y, width, height, maskOverlays: true);
 
     public static BitmapSource? Capture(int x, int y, int width, int height) =>
-        Capture(x, y, width, height, redrawWindowUnderCentre: false);
+        Capture(x, y, width, height, maskOverlays: false);
 
     private static BitmapSource? Capture(
-        int x, int y, int width, int height, bool redrawWindowUnderCentre)
+        int x, int y, int width, int height, bool maskOverlays)
     {
         if (width <= 0 || height <= 0) return null;
 
@@ -64,9 +64,9 @@ internal static class ScreenCapture
             var copied = BitBlt(memoryDc, 0, 0, width, height, screenDc, x, y,
                 SRCCOPY | CAPTUREBLT);
 
-            if (copied && redrawWindowUnderCentre)
+            if (copied && maskOverlays)
             {
-                RedrawWindowUnder(memoryDc, x, y, width, height);
+                MaskOverlays(memoryDc, x, y, width, height);
             }
 
             SelectObject(memoryDc, previous);
@@ -93,32 +93,57 @@ internal static class ScreenCapture
     }
 
     /// <summary>
-    /// Draws the window under the centre of the captured area into the same bitmap, in
-    /// the right place, from the window's own content rather than from the screen.
+    /// Paints over any floating overlay that happens to sit within the captured area.
+    ///
+    /// During a drag the system paints the dragged file's ghost as a layered window that
+    /// rides the cursor, and the wheel opens on the cursor, so the ghost always lands in
+    /// the middle of the backdrop. Blurred, it reads as a bright smear across the glass.
+    ///
+    /// An overlay is not part of what is behind the wheel, so its area is filled with a
+    /// tone sampled from the capture instead. The blur then has nothing to spread. This
+    /// matches on the window being layered and topmost rather than on any particular
+    /// class, so tooltips and similar transients are handled the same way.
     /// </summary>
-    private static void RedrawWindowUnder(IntPtr targetDc, int x, int y, int width, int height)
+    private static void MaskOverlays(IntPtr targetDc, int x, int y, int width, int height)
     {
         try
         {
-            var centre = new NativeMethods.POINT(x + width / 2, y + height / 2);
-            var window = NativeMethods.GetAncestor(
-                NativeMethods.WindowFromPoint(centre), NativeMethods.GA_ROOT);
-
-            if (window == IntPtr.Zero) return;
-            if (!NativeMethods.GetWindowRect(window, out var bounds)) return;
-
-            // PrintWindow always draws at the origin of the target, so the origin is
-            // moved to where the window actually sits within the captured rectangle.
-            if (!SetViewportOrgEx(targetDc, bounds.Left - x, bounds.Top - y, out var previous))
+            var captured = new NativeMethods.RECT
             {
-                return;
+                Left = x, Top = y, Right = x + width, Bottom = y + height
+            };
+
+            var fill = SampleBackdropTone(targetDc, width, height);
+            var brush = CreateSolidBrush(fill);
+            if (brush == IntPtr.Zero) return;
+
+            var overlays = OverlaysIntersecting(captured);
+            if (overlays.Count > 0)
+            {
+                Diagnostics.Log.Write(
+                    $"masked {overlays.Count} overlay(s) out of the backdrop");
             }
 
-            // RENDERFULLCONTENT is what makes this work for a modern composited window;
-            // without it the result is commonly blank.
-            PrintWindow(window, targetDc, PW_RENDERFULLCONTENT);
+            try
+            {
+                foreach (var overlay in overlays)
+                {
+                    // Into capture-relative coordinates, clipped to the capture.
+                    var area = new NativeMethods.RECT
+                    {
+                        Left = Math.Max(overlay.Left, captured.Left) - x,
+                        Top = Math.Max(overlay.Top, captured.Top) - y,
+                        Right = Math.Min(overlay.Right, captured.Right) - x,
+                        Bottom = Math.Min(overlay.Bottom, captured.Bottom) - y
+                    };
 
-            SetViewportOrgEx(targetDc, previous.X, previous.Y, out _);
+                    FillRect(targetDc, ref area, brush);
+                }
+            }
+            finally
+            {
+                DeleteObject(brush);
+            }
         }
         catch (Exception)
         {
@@ -126,16 +151,82 @@ internal static class ScreenCapture
         }
     }
 
+    /// <summary>
+    /// Visible, layered, topmost windows overlapping the captured area, excluding this
+    /// process's own. Those are overlays rather than content.
+    /// </summary>
+    private static List<NativeMethods.RECT> OverlaysIntersecting(NativeMethods.RECT captured)
+    {
+        var found = new List<NativeMethods.RECT>();
+        var self = (uint)Environment.ProcessId;
+
+        NativeMethods.EnumWindows((window, _) =>
+        {
+            if (!NativeMethods.IsWindowVisible(window)) return true;
+
+            var exStyle = NativeMethods.GetWindowLong(window, NativeMethods.GWL_EXSTYLE);
+            if ((exStyle & NativeMethods.WS_EX_LAYERED) == 0) return true;
+            if ((exStyle & NativeMethods.WS_EX_TOPMOST) == 0) return true;
+
+            NativeMethods.GetWindowThreadProcessId(window, out var owner);
+            if (owner == self) return true;
+
+            if (!NativeMethods.GetWindowRect(window, out var bounds)) return true;
+
+            var overlaps = bounds.Left < captured.Right && bounds.Right > captured.Left
+                           && bounds.Top < captured.Bottom && bounds.Bottom > captured.Top;
+
+            if (overlaps) found.Add(bounds);
+            return true;
+        }, IntPtr.Zero);
+
+        return found;
+    }
+
+    /// <summary>
+    /// A colour to paint an overlay out with, taken from the corners of the capture,
+    /// which are the parts least likely to be covered by something riding the cursor.
+    /// </summary>
+    private static int SampleBackdropTone(IntPtr dc, int width, int height)
+    {
+        var inset = Math.Max(2, Math.Min(width, height) / 8);
+        var points = new[]
+        {
+            (inset, inset),
+            (width - inset, inset),
+            (inset, height - inset),
+            (width - inset, height - inset)
+        };
+
+        long red = 0, green = 0, blue = 0;
+        var counted = 0;
+
+        foreach (var (px, py) in points)
+        {
+            var colour = GetPixel(dc, px, py);
+            if (colour == -1) continue;   // CLR_INVALID
+
+            red += colour & 0xFF;
+            green += (colour >> 8) & 0xFF;
+            blue += (colour >> 16) & 0xFF;
+            counted++;
+        }
+
+        if (counted == 0) return 0x202020;
+
+        return (int)((red / counted) | ((green / counted) << 8) | ((blue / counted) << 16));
+    }
+
     private const int SRCCOPY = 0x00CC0020;
 
-    /// <summary>Render the whole window, including parts drawn by the compositor.</summary>
-    private const uint PW_RENDERFULLCONTENT = 0x00000002;
-
-    [DllImport("user32.dll")]
-    private static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateSolidBrush(int colour);
 
     [DllImport("gdi32.dll")]
-    private static extern bool SetViewportOrgEx(IntPtr hdc, int x, int y, out NativeMethods.POINT previous);
+    private static extern int GetPixel(IntPtr hdc, int x, int y);
+
+    [DllImport("user32.dll")]
+    private static extern int FillRect(IntPtr hdc, ref NativeMethods.RECT rect, IntPtr brush);
 
     /// <summary>Include layered windows in the copy.</summary>
     private const int CAPTUREBLT = 0x40000000;

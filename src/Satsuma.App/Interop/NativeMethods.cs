@@ -86,6 +86,7 @@ internal static class NativeMethods
     internal const int WS_EX_NOACTIVATE = 0x08000000;
     internal const int WS_EX_TOOLWINDOW = 0x00000080;
     internal const int WS_EX_TOPMOST = 0x00000008;
+    internal const int WS_EX_LAYERED = 0x00080000;
 
     internal static readonly IntPtr HWND_TOPMOST = new(-1);
 
@@ -110,6 +111,19 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     internal static extern IntPtr GetForegroundWindow();
+
+    internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

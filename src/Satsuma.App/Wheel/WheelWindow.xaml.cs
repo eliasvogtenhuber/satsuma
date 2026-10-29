@@ -226,8 +226,17 @@ public partial class WheelWindow : Window
             RebuildItems();
             var buildMs = clock.Elapsed.TotalMilliseconds - captureMs - tintMs;
 
+            // Shown off screen, then moved into place once a frame carrying the new
+            // contents has actually been composed.
+            //
+            // Building before showing is not enough on its own: changes to the visual
+            // tree are queued and composed on the next frame, so a window shown now still
+            // presents what it last rendered. That was the previous wheel -- a preset
+            // ring, if the last use had drilled into one -- for a single frame.
+            PositionOffScreen(bounds);
             Show();
-            ApplyBounds(bounds);
+
+            MoveIntoPlaceNextFrame(bounds);
 
             Diagnostics.Log.Write(
                 $"open: capture {captureMs:0}ms, tint {tintMs:0}ms, build {buildMs:0}ms, " +
@@ -468,6 +477,24 @@ public partial class WheelWindow : Window
         return new Bounds(left, top, size, size);
     }
 
+    /// <summary>Far outside any monitor, where a frame can be painted unseen.</summary>
+    private const int OffScreen = -32000;
+
+    /// <summary>
+    /// Puts the window at its final size but off screen, while recording the bounds it is
+    /// about to occupy so that hit testing already refers to where it will be.
+    /// </summary>
+    private void PositionOffScreen(Bounds bounds)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+
+        _bounds = bounds;
+        _scale = bounds.Width > 0 ? bounds.Width / _settings.WheelDiameter : 1.0;
+
+        SetWindowPos(handle, HWND_TOPMOST, OffScreen, OffScreen,
+            bounds.Width, bounds.Height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+
     private void ApplyBounds(Bounds bounds)
     {
         var handle = new WindowInteropHelper(this).Handle;
@@ -480,6 +507,25 @@ public partial class WheelWindow : Window
         SetWindowPos(handle, HWND_TOPMOST,
             bounds.Left, bounds.Top, bounds.Width, bounds.Height,
             SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+
+    /// <summary>
+    /// Moves the window to where it belongs after one frame has been composed, so what
+    /// first appears on screen is this wheel and not the last one.
+    /// </summary>
+    private void MoveIntoPlaceNextFrame(Bounds bounds)
+    {
+        void OnFrame(object? sender, EventArgs e)
+        {
+            CompositionTarget.Rendering -= OnFrame;
+
+            // Dismissed again within the frame; nothing to place.
+            if (!IsVisible) return;
+
+            ApplyBounds(bounds);
+        }
+
+        CompositionTarget.Rendering += OnFrame;
     }
 
     private Bounds _bounds;

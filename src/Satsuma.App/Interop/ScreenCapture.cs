@@ -18,7 +18,24 @@ namespace Satsuma.App.Interop;
 /// </summary>
 internal static class ScreenCapture
 {
-    public static BitmapSource? Capture(int x, int y, int width, int height)
+    /// <summary>
+    /// Captures a rectangle, then redraws the window under its centre on top of it from
+    /// that window's own content.
+    ///
+    /// This is for capturing during a drag. The system paints the dragged file's ghost as
+    /// a layered window riding the cursor, and the cursor is exactly where the wheel
+    /// appears, so the ghost lands in the middle of the backdrop and blurs into a bright
+    /// smear. Asking the window underneath to draw itself gets its real content with no
+    /// overlay of any kind on it.
+    /// </summary>
+    public static BitmapSource? CaptureWithoutOverlays(int x, int y, int width, int height) =>
+        Capture(x, y, width, height, redrawWindowUnderCentre: true);
+
+    public static BitmapSource? Capture(int x, int y, int width, int height) =>
+        Capture(x, y, width, height, redrawWindowUnderCentre: false);
+
+    private static BitmapSource? Capture(
+        int x, int y, int width, int height, bool redrawWindowUnderCentre)
     {
         if (width <= 0 || height <= 0) return null;
 
@@ -47,6 +64,11 @@ internal static class ScreenCapture
             var copied = BitBlt(memoryDc, 0, 0, width, height, screenDc, x, y,
                 SRCCOPY | CAPTUREBLT);
 
+            if (copied && redrawWindowUnderCentre)
+            {
+                RedrawWindowUnder(memoryDc, x, y, width, height);
+            }
+
             SelectObject(memoryDc, previous);
             if (!copied) return null;
 
@@ -70,7 +92,50 @@ internal static class ScreenCapture
         }
     }
 
+    /// <summary>
+    /// Draws the window under the centre of the captured area into the same bitmap, in
+    /// the right place, from the window's own content rather than from the screen.
+    /// </summary>
+    private static void RedrawWindowUnder(IntPtr targetDc, int x, int y, int width, int height)
+    {
+        try
+        {
+            var centre = new NativeMethods.POINT(x + width / 2, y + height / 2);
+            var window = NativeMethods.GetAncestor(
+                NativeMethods.WindowFromPoint(centre), NativeMethods.GA_ROOT);
+
+            if (window == IntPtr.Zero) return;
+            if (!NativeMethods.GetWindowRect(window, out var bounds)) return;
+
+            // PrintWindow always draws at the origin of the target, so the origin is
+            // moved to where the window actually sits within the captured rectangle.
+            if (!SetViewportOrgEx(targetDc, bounds.Left - x, bounds.Top - y, out var previous))
+            {
+                return;
+            }
+
+            // RENDERFULLCONTENT is what makes this work for a modern composited window;
+            // without it the result is commonly blank.
+            PrintWindow(window, targetDc, PW_RENDERFULLCONTENT);
+
+            SetViewportOrgEx(targetDc, previous.X, previous.Y, out _);
+        }
+        catch (Exception)
+        {
+            // Worst case the backdrop keeps whatever the screen copy gave it.
+        }
+    }
+
     private const int SRCCOPY = 0x00CC0020;
+
+    /// <summary>Render the whole window, including parts drawn by the compositor.</summary>
+    private const uint PW_RENDERFULLCONTENT = 0x00000002;
+
+    [DllImport("user32.dll")]
+    private static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
+
+    [DllImport("gdi32.dll")]
+    private static extern bool SetViewportOrgEx(IntPtr hdc, int x, int y, out NativeMethods.POINT previous);
 
     /// <summary>Include layered windows in the copy.</summary>
     private const int CAPTUREBLT = 0x40000000;

@@ -202,8 +202,12 @@ public partial class WheelWindow : Window
 
             // Photograph the desktop before the window covers it, or the frosted backdrop
             // ends up being a picture of the wheel itself.
-            var capture = ScreenCapture.Capture(
-                bounds.Left, bounds.Top, bounds.Width, bounds.Height);
+            // Only a drag has an overlay to work around, and avoiding it costs a
+            // window redraw, so the click path keeps the cheaper plain copy.
+            var capture = IsSticky
+                ? ScreenCapture.Capture(bounds.Left, bounds.Top, bounds.Width, bounds.Height)
+                : ScreenCapture.CaptureWithoutOverlays(
+                    bounds.Left, bounds.Top, bounds.Width, bounds.Height);
 
             var captureMs = clock.Elapsed.TotalMilliseconds;
 

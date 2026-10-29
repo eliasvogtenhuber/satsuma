@@ -54,6 +54,20 @@ public partial class App : Application
         _settings = AppSettings.Load();
         _runner = new JobRunner();
 
+        // Satsuma is idle nearly all the time, and Windows trims an idle process's
+        // working set, so the pages holding the wheel and its compiled code go out to
+        // disk. The first drag after a quiet spell then faults them all back in, which is
+        // exactly the reported symptom: slow once, fine every time after.
+        var pinned = NativeMethods.KeepWorkingSetResident(
+            minimumBytes: 96L * 1024 * 1024,
+            maximumBytes: 512L * 1024 * 1024);
+
+        // Keeps the collector from handing pages back between uses for the same reason.
+        System.Runtime.GCSettings.LatencyMode =
+            System.Runtime.GCLatencyMode.SustainedLowLatency;
+
+        Log.Write($"working set floor set: {pinned}");
+
         // Finding ffmpeg walks PATH and the winget install tree, which is disk work that
         // happens once and would otherwise happen inside the first wheel build. Started
         // here so it overlaps the rest of startup instead of delaying a drag.

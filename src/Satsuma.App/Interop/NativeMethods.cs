@@ -112,6 +112,39 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern IntPtr GetForegroundWindow();
 
+    // ---- Working set ------------------------------------------------------
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetProcessWorkingSetSizeEx(
+        IntPtr process, IntPtr minimum, IntPtr maximum, uint flags);
+
+    private const uint QuotaLimitsHardWorkingSetMinEnable = 0x00000001;
+    private const uint QuotaLimitsHardWorkingSetMaxDisable = 0x00000008;
+
+    /// <summary>
+    /// Asks Windows not to trim this process below a floor.
+    ///
+    /// Satsuma spends nearly all its time doing nothing, and an idle process has its
+    /// working set trimmed, so the pages holding the wheel and its compiled code go out
+    /// to disk. The next drag then faults them all back in, which is felt as lag on the
+    /// first use after a quiet spell and on no use after that.
+    ///
+    /// A floor rather than a pin: the maximum stays unbounded, so this asks to keep what
+    /// is already resident rather than to reserve anything.
+    /// </summary>
+    internal static bool KeepWorkingSetResident(long minimumBytes, long maximumBytes)
+    {
+        return SetProcessWorkingSetSizeEx(
+            GetCurrentProcess(),
+            new IntPtr(minimumBytes),
+            new IntPtr(maximumBytes),
+            QuotaLimitsHardWorkingSetMinEnable | QuotaLimitsHardWorkingSetMaxDisable);
+    }
+
     internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     [DllImport("user32.dll")]

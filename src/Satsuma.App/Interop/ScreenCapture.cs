@@ -38,9 +38,14 @@ internal static class ScreenCapture
 
             var previous = SelectObject(memoryDc, bitmap);
 
-            // CAPTUREBLT would include layered windows above us, which is the opposite of
-            // what the backdrop should show.
-            var copied = BitBlt(memoryDc, 0, 0, width, height, screenDc, x, y, SRCCOPY);
+            // CAPTUREBLT is needed, not avoided. Without it layered windows are left out
+            // of the copy, and the pixels they covered come back undefined rather than
+            // transparent -- which showed up as white patches in the frosted backdrop
+            // during a drag, where the system paints the dragged file's ghost as exactly
+            // such a window. Including them costs only that ghost appearing in the blur,
+            // where at this radius it is not visible.
+            var copied = BitBlt(memoryDc, 0, 0, width, height, screenDc, x, y,
+                SRCCOPY | CAPTUREBLT);
 
             SelectObject(memoryDc, previous);
             if (!copied) return null;
@@ -66,6 +71,9 @@ internal static class ScreenCapture
     }
 
     private const int SRCCOPY = 0x00CC0020;
+
+    /// <summary>Include layered windows in the copy.</summary>
+    private const int CAPTUREBLT = 0x40000000;
 
     [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);

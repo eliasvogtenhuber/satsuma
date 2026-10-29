@@ -93,8 +93,25 @@ public partial class App : Application
         {
             _watcher = new DragWatcher(_settings, Dispatcher);
             _watcher.WheelRequested += OnWheelRequested;
+            _watcher.ClickWheelRequested += OnClickWheelRequested;
+
+            // Clicking away from a sticky wheel puts it away, the way any transient
+            // surface behaves. A click on the wheel itself is the wheel's own business.
+            _watcher.ClickedWhileOpen += (_, click) =>
+            {
+                if (_wheel?.IsSticky != true) return;
+                if (_wheel.HitTestScreen(click.ScreenX, click.ScreenY)) return;
+
+                CloseWheel();
+            };
             _watcher.Cancelled += (_, _) => CloseWheel();
-            _watcher.DragFinished += (_, _) => _closeAfterDrag.Start();
+            _watcher.DragFinished += (_, _) =>
+            {
+                // A wheel opened by clicking is meant to outlive the button, so the
+                // release that ends a drag must not take it down with it.
+                if (_wheel?.IsSticky == true) return;
+                _closeAfterDrag.Start();
+            };
             _watcher.Start();
         }
         catch (Exception ex)
@@ -207,6 +224,37 @@ public partial class App : Application
                 // already arrived from the drop target.
                 Dispatcher.BeginInvoke(() => wheel.SeedLate(task.Result));
             }, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// A bound key was held and a file clicked. The wheel goes up where the click landed
+    /// and stays there, driven by clicking rather than by the drag.
+    /// </summary>
+    private void OnClickWheelRequested(object? sender, DragModifierEvent e)
+    {
+        if (_wheel is null || _watcher is null) return;
+
+        _closeAfterDrag?.Stop();
+        _watcher.WheelOpen = true;
+        _wheel.ShowForClick(e.Wheel, Array.Empty<SourceFile>(), e.ScreenX, e.ScreenY);
+
+        // There is no drag data here, so the Explorer selection is the only way to learn
+        // which file was clicked, and it has to be read after the click has registered.
+        var wheel = _wheel;
+        var point = (e.ScreenX, e.ScreenY);
+
+        Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(130)).ConfigureAwait(false);
+
+            // Shell COM is apartment-threaded, and thread-pool threads are not.
+            var files = await Core.Tools.StaExecutor
+                .RunAsync(() => ShellSelection.FromPoint(point.ScreenX, point.ScreenY))
+                .ConfigureAwait(false);
+
+            if (files.Count == 0) return;
+            await Dispatcher.BeginInvoke(() => wheel.SeedLate(files));
+        });
     }
 
     private void OnCloseAfterDrag(object? sender, EventArgs e)

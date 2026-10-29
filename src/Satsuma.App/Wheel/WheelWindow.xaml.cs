@@ -60,6 +60,9 @@ public partial class WheelWindow : Window
     /// <summary>The pending dwell steps back out of a preset ring rather than into one.</summary>
     private bool _dwellGoesBack;
 
+    /// <summary>Swallows the release of the click that opened a sticky wheel.</summary>
+    private bool _ignoreNextMouseUp;
+
     /// <summary>
     /// Releasing the button over the wheel can arrive twice: once as the OLE drop and
     /// once as a plain mouse-up. Whichever lands first wins.
@@ -225,9 +228,38 @@ public partial class WheelWindow : Window
         RebuildItems();
     }
 
+    /// <summary>
+    /// True when the wheel was opened by clicking rather than by dragging, and so stays
+    /// up on its own until something is picked or it is dismissed.
+    /// </summary>
+    public bool IsSticky { get; private set; }
+
+    /// <summary>
+    /// Opens the wheel for a click rather than a drag: it stays up after the button and
+    /// the key are released, and is driven by ordinary clicking.
+    ///
+    /// The file is whatever the click selected, which has to be read from Explorer,
+    /// because unlike a drag there is no data object to ask.
+    /// </summary>
+    public void ShowForClick(WheelKind kind, IReadOnlyList<SourceFile> files, int screenX, int screenY)
+    {
+        if (IsVisible) return;
+
+        IsSticky = true;
+
+        // The click that opened the wheel has not been released yet. Without this, that
+        // release lands on the hub sitting under the pointer and dismisses the wheel the
+        // instant it appears.
+        _ignoreNextMouseUp = true;
+
+        ShowFor(kind, files, screenX, screenY);
+    }
+
     public void Dismiss()
     {
         _dwellTimer.Stop();
+        IsSticky = false;
+        _ignoreNextMouseUp = false;
         if (IsVisible) Hide();
     }
 
@@ -617,7 +649,7 @@ public partial class WheelWindow : Window
         if (_parentItem is not null)
         {
             HubPrimary.Text = _parentItem.Label;
-            HubSecondary.Text = "Rest here to go back";
+            HubSecondary.Text = IsSticky ? "Click here to go back" : "Rest here to go back";
             return;
         }
 
@@ -835,6 +867,17 @@ public partial class WheelWindow : Window
         SetHover(-1);
     }
 
+    /// <summary>True when a screen point falls inside the wheel at all.</summary>
+    public bool HitTestScreen(int screenX, int screenY)
+    {
+        if (!IsVisible || _scale <= 0) return false;
+
+        var dx = (screenX - _bounds.Left) / _scale - _centre.X;
+        var dy = (screenY - _bounds.Top) / _scale - _centre.Y;
+
+        return Math.Sqrt(dx * dx + dy * dy) <= _outerRadius + 4;
+    }
+
     /// <summary>
     /// True when the system cursor is over a pane right now, independent of whatever
     /// routed event is being handled.
@@ -876,6 +919,14 @@ public partial class WheelWindow : Window
     private void OnMouseUpWheel(object sender, MouseButtonEventArgs e)
     {
         if (!IsVisible) return;
+
+        if (_ignoreNextMouseUp)
+        {
+            // The release of the click that opened this wheel.
+            _ignoreNextMouseUp = false;
+            return;
+        }
+
         Commit(IndexAt(e.GetPosition(RootGrid)));
     }
 

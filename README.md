@@ -20,7 +20,9 @@ wheel yet — see [Roadmap](#roadmap).
 
 ## How it works
 
-Hold the left mouse button and start dragging, then press a number key:
+There are two ways in.
+
+**Dragging.** Hold the left mouse button and start dragging, then press a number key:
 
 | Key | Wheel | What is on it |
 | --- | --- | --- |
@@ -39,6 +41,11 @@ Then:
   it to click would end the drag rather than step back.
 - **Esc** or **right-click** cancels outright.
 - The wheel stays up after you release the key, so you can take your time.
+
+**Clicking.** Hold the number key first, then click a file. The wheel opens where you
+clicked and stays there, so you can let go of everything and take your time. Click a
+slice to pick it, click the centre to go back out of a preset ring, and click away from
+the wheel or press Esc to put it away.
 
 Results are always new files written beside the original. Satsuma never overwrites or
 moves what you dragged.

@@ -44,6 +44,9 @@ public sealed class DragWatcher : IDisposable
     /// <summary>Bound keys currently held, so auto-repeat can be told from a new press.</summary>
     private readonly HashSet<int> _heldKeys = new();
 
+    /// <summary>A wheel waiting for a click to say which file, or null.</summary>
+    private WheelKind? _armedKind;
+
     private bool _buttonDown;
     private bool _dragging;
     private POINT _origin;
@@ -60,6 +63,12 @@ public sealed class DragWatcher : IDisposable
 
     /// <summary>The left button came up, so any drag is over.</summary>
     public event EventHandler? DragFinished;
+
+    /// <summary>A file was clicked while a bound key was held, with no drag involved.</summary>
+    public event EventHandler<DragModifierEvent>? ClickWheelRequested;
+
+    /// <summary>The button went down somewhere while a wheel was already on screen.</summary>
+    public event EventHandler<DragModifierEvent>? ClickedWhileOpen;
 
     public DragWatcher(AppSettings settings, Dispatcher dispatcher)
     {
@@ -131,7 +140,32 @@ public sealed class DragWatcher : IDisposable
                     _origin = data.pt;
                     _buttonDown = true;
                     _dragging = false;
-                    Log.Write($"button down at {_origin.X},{_origin.Y}");
+
+                    // A bound key held before the click, rather than pressed during a
+                    // drag, means the other way round: click a file to open the wheel and
+                    // leave it open. The click itself is let through, because Explorer
+                    // selecting the file is how Satsuma finds out which file it was.
+                    if (_armedKind is not null && !WheelOpen)
+                    {
+                        var kind = _armedKind.Value;
+                        var point = data.pt;
+
+                        Log.Write($"click wheel armed: {kind} at {point.X},{point.Y}");
+                        Post(() => ClickWheelRequested?.Invoke(
+                            this, new DragModifierEvent(kind, point.X, point.Y, point.X, point.Y)));
+                    }
+                    else
+                    {
+                        Log.Write($"button down at {_origin.X},{_origin.Y}");
+
+                        if (WheelOpen)
+                        {
+                            var point = data.pt;
+                            Post(() => ClickedWhileOpen?.Invoke(this,
+                                new DragModifierEvent(WheelKind.Formats,
+                                    point.X, point.Y, point.X, point.Y)));
+                        }
+                    }
                     break;
                 }
 
@@ -156,6 +190,7 @@ public sealed class DragWatcher : IDisposable
                     _buttonDown = false;
                     _dragging = false;
                     _heldKeys.Clear();
+                    _armedKind = null;
 
                     // The drop itself is reported by the wheel window, which gets the
                     // real data object. This only matters for a drag released elsewhere.
@@ -203,6 +238,10 @@ public sealed class DragWatcher : IDisposable
 
                     Log.Write($"bound key 0x{key:X2} -> {wheel}, dragging={_dragging}");
 
+                    // Held with no drag under way: arm the click mode and wait for a
+                    // click to say which file.
+                    if (!_dragging) _armedKind = wheel;
+
                     // A drag has to be in flight. Without that check, pressing the key
                     // anywhere in Windows would throw a wheel on screen.
                     if (_dragging && GetCursorPos(out var cursor))
@@ -226,6 +265,10 @@ public sealed class DragWatcher : IDisposable
                 var key = (int)data.vkCode;
 
                 var wasHeld = _heldKeys.Remove(key);
+                if (wasHeld && _keyMap.TryGetValue(key, out var released) && _armedKind == released)
+                {
+                    _armedKind = null;
+                }
 
                 // The matching key-up is swallowed too, or an app sees a release with no
                 // press and can latch a modifier on.

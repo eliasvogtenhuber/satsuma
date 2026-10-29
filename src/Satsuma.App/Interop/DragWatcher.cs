@@ -7,7 +7,13 @@ using static Satsuma.App.Interop.NativeMethods;
 
 namespace Satsuma.App.Interop;
 
-public sealed record DragModifierEvent(WheelKind Wheel, int ScreenX, int ScreenY);
+/// <summary>
+/// A request for a wheel. Carries where the pointer is now and where the drag began:
+/// the selection has to be read from the window the drag started in, which by this point
+/// is no longer the window under the pointer.
+/// </summary>
+public sealed record DragModifierEvent(
+    WheelKind Wheel, int ScreenX, int ScreenY, int OriginX, int OriginY);
 
 /// <summary>
 /// Watches global input and works out when the user is dragging something and has asked
@@ -201,9 +207,11 @@ public sealed class DragWatcher : IDisposable
                     // anywhere in Windows would throw a wheel on screen.
                     if (_dragging && GetCursorPos(out var cursor))
                     {
+                        var origin = _origin;
                         Log.Write($"wheel requested: {wheel} at {cursor.X},{cursor.Y}");
                         Post(() => WheelRequested?.Invoke(
-                            this, new DragModifierEvent(wheel, cursor.X, cursor.Y)));
+                            this, new DragModifierEvent(
+                                wheel, cursor.X, cursor.Y, origin.X, origin.Y)));
 
                         // Swallowed so that an app being dragged over never sees the
                         // keystroke. Explorer ignores these keys mid-drag, but an

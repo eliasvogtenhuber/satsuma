@@ -143,8 +143,10 @@ public partial class App : Application
 
         // A guess at the selection, so the wheel opens with the right slices already on
         // it. The real paths replace this as soon as the drag reaches the wheel.
-        var seed = ShellSelection.FromPoint(e.ScreenX, e.ScreenY);
-        Log.Write($"showing {e.Wheel} wheel, seed={seed.Count} file(s)");
+        var seed = ShellSelection.ForDrag(e.OriginX, e.OriginY, e.ScreenX, e.ScreenY);
+        Log.Write(
+            $"showing {e.Wheel} wheel, seed={seed.Count} file(s) " +
+            $"(origin {e.OriginX},{e.OriginY})");
 
         _watcher.WheelOpen = true;
         _wheel.ShowFor(e.Wheel, seed, e.ScreenX, e.ScreenY);
@@ -198,8 +200,7 @@ public partial class App : Application
         using var cancellation = new CancellationTokenSource();
         card.Attach(cancellation);
 
-        card.Show();
-        card.PositionNearCursor();
+        card.ShowNearCursor();
         card.Report(new JobProgress(choice.Item.Label, 0,
             choice.Files.Count == 1 ? choice.Files[0].Name : $"{choice.Files.Count} files"));
 

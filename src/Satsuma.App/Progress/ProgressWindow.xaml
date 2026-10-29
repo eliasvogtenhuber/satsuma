@@ -10,16 +10,54 @@
         Topmost="True"
         ResizeMode="NoResize"
         UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
         FontFamily="Segoe UI Variable Text, Segoe UI"
-        Width="330" Height="92">
+        Width="326" Height="96">
 
-    <Border CornerRadius="10" Background="#F21A1A1A" BorderBrush="#2BFFFFFF" BorderThickness="1"
-            Margin="8">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="18" ShadowDepth="2" Opacity="0.45" Color="#000000" />
-        </Border.Effect>
+    <!-- Same glass as the wheel: a blurred photograph of what the card covers, a scrim
+         weighted to how bright that is, a thin rim, and text carrying its own shadow so
+         the tint never has to be heavy. -->
 
-        <Grid Margin="14,11">
+    <Grid Margin="10">
+        <Grid.Resources>
+            <CornerRadius x:Key="Radius">14</CornerRadius>
+        </Grid.Resources>
+
+        <!-- Lifts the card off whatever is behind it. -->
+        <Border CornerRadius="14" Background="#8A000000">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="20" ShadowDepth="3" Direction="270"
+                                  Opacity="0.45" Color="#000000" />
+            </Border.Effect>
+        </Border>
+
+        <!-- The frost. Clipped by the border it sits in. -->
+        <Border CornerRadius="14" ClipToBounds="True">
+            <Image x:Name="Backdrop" Stretch="Fill" CacheMode="BitmapCache">
+                <Image.Effect>
+                    <BlurEffect Radius="24" KernelType="Gaussian" RenderingBias="Performance" />
+                </Image.Effect>
+            </Image>
+        </Border>
+
+        <Border x:Name="Scrim" CornerRadius="14" />
+
+        <Border CornerRadius="14">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Offset="0" Color="#24FFFFFF" />
+                    <GradientStop Offset="0.5" Color="#12FFFFFF" />
+                    <GradientStop Offset="1" Color="#0AFFFFFF" />
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <Border CornerRadius="14" BorderBrush="#4DFFFFFF" BorderThickness="1" />
+
+        <Grid Margin="15,12">
+            <Grid.Effect>
+                <DropShadowEffect BlurRadius="5" ShadowDepth="0" Opacity="0.85" Color="Black" />
+            </Grid.Effect>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -33,30 +71,38 @@
             <TextBlock x:Name="TitleText"
                        Grid.Row="0" Grid.Column="0"
                        Text="Working"
-                       FontSize="13.5" FontWeight="SemiBold" Foreground="#F5F5F5"
+                       FontSize="13.5" FontWeight="SemiBold" Foreground="#FAFAFA"
                        TextTrimming="CharacterEllipsis" />
 
             <TextBlock x:Name="CancelButton"
                        Grid.Row="0" Grid.Column="1"
                        Text="&#xE711;"
                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                       FontSize="11" Foreground="#9C9C9C"
+                       FontSize="11" Foreground="#B0B0B0"
                        Cursor="Hand" Margin="8,2,0,0"
                        ToolTip="Cancel" />
 
             <TextBlock x:Name="DetailText"
                        Grid.Row="1" Grid.ColumnSpan="2"
                        Text=""
-                       FontSize="11" Foreground="#9C9C9C"
+                       FontSize="11" Foreground="#B8B8B8"
                        Margin="0,3,0,0"
                        TextTrimming="CharacterEllipsis" />
 
-            <ProgressBar x:Name="Bar"
-                         Grid.Row="2" Grid.ColumnSpan="2"
-                         Height="4" Minimum="0" Maximum="1" Value="0"
-                         Margin="0,9,0,0"
-                         Background="#26FFFFFF" Foreground="#F08A3D"
-                         BorderThickness="0" />
+            <!-- Drawn rather than a ProgressBar: the stock control brings its own chrome,
+                 which is the part that looked out of place next to the wheel. -->
+            <Grid x:Name="BarTrack" Grid.Row="2" Grid.ColumnSpan="2" Height="3" Margin="0,11,0,0"
+                  HorizontalAlignment="Stretch">
+                <Border CornerRadius="1.5" Background="#2EFFFFFF" />
+                <Border x:Name="BarFill" CornerRadius="1.5" HorizontalAlignment="Left" Width="0">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                            <GradientStop Offset="0" Color="#E8FFFFFF" />
+                            <GradientStop Offset="1" Color="#FFFFFFFF" />
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>
+            </Grid>
         </Grid>
-    </Border>
+    </Grid>
 </Window>

@@ -22,6 +22,25 @@ public static class ShellSelection
     /// Best guess at what is being dragged, given where the drag started.
     /// Empty when the source is not a shell view, which is not an error.
     /// </summary>
+    /// <summary>
+    /// Looks where the drag began, then where the pointer is now.
+    ///
+    /// The origin is what matters: by the time a wheel is asked for, the pointer has left
+    /// the window the files came from, so asking what is selected under it finds nothing.
+    /// The current point is kept as a fallback for the case where a wheel is opened
+    /// without a drag at all.
+    /// </summary>
+    public static IReadOnlyList<SourceFile> ForDrag(
+        int originX, int originY, int pointerX, int pointerY)
+    {
+        var atOrigin = FromPoint(originX, originY);
+        if (atOrigin.Count > 0) return atOrigin;
+
+        return originX == pointerX && originY == pointerY
+            ? atOrigin
+            : FromPoint(pointerX, pointerY);
+    }
+
     public static IReadOnlyList<SourceFile> FromPoint(int screenX, int screenY)
     {
         try

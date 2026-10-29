@@ -34,7 +34,9 @@ Then:
   on it precisely — and release the mouse button to drop.
 - **Presets** (Compress, Resize, Rotate) open a second ring. Hover one for a moment, or
   drop onto it, and the ring becomes its presets.
-- **The centre** cancels, or steps back out of a preset ring.
+- **The centre** cancels. Inside a preset ring, resting there steps back out instead:
+  going back has to work on hover, because the mouse button is still held and releasing
+  it to click would end the drag rather than step back.
 - **Esc** or **right-click** cancels outright.
 - The wheel stays up after you release the key, so you can take your time.
 

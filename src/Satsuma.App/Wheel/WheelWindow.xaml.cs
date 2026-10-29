@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Satsuma.App.Glass;
 using Satsuma.App.Interop;
 using Satsuma.App.Settings;
 using Satsuma.Core.Catalog;
@@ -55,6 +56,9 @@ public partial class WheelWindow : Window
 
     private int _hoverIndex = -1;
     private WheelItem? _dwellCandidate;
+
+    /// <summary>The pending dwell steps back out of a preset ring rather than into one.</summary>
+    private bool _dwellGoesBack;
 
     /// <summary>
     /// Releasing the button over the wheel can arrive twice: once as the OLE drop and
@@ -199,7 +203,7 @@ public partial class WheelWindow : Window
 
             Backdrop.Source = capture;
             BackdropDeep.Source = capture;
-            _scrim = BuildScrim(capture);
+            _scrim = GlassTint.For(capture, _settings.EffectiveGlassOpacity);
 
             Show();
             ApplyBounds(bounds);
@@ -249,72 +253,6 @@ public partial class WheelWindow : Window
 
     /// <summary>
     /// Centres the wheel on the pointer, nudged inwards so it never hangs off the screen.
-    /// <summary>
-    /// Picks how heavily to tint the glass, from how bright the captured backdrop is,
-    /// then applies the user's own bias.
-    ///
-    /// One fixed translucency cannot work: the same wheel has to sit over a white document
-    /// and over a dark desktop, and its labels are white either way. Measuring what it
-    /// covers, and leaning on the scrim only as much as that needs, keeps the glass light
-    /// where it can be and legible where it must be. GlassOpacity then shifts the whole
-    /// scale to taste without flattening that behaviour.
-    /// </summary>
-    private Brush BuildScrim(BitmapSource? capture)
-    {
-        const double darkest = 0x10;    // over a dark desktop: all but absent
-        const double brightest = 0x54;  // over a white window: just enough to seat the text
-
-        var luminance = EstimateLuminance(capture) ?? 0.35;
-        var baseline = darkest + (brightest - darkest) * Math.Clamp(luminance, 0, 1);
-
-        var alpha = (byte)Math.Clamp(baseline * _settings.EffectiveGlassOpacity, 0, 255);
-
-        return Freeze(new SolidColorBrush(Color.FromArgb(alpha, 0x06, 0x06, 0x09)));
-    }
-
-    /// <summary>Mean perceived brightness of the capture, 0..1, or null if unreadable.</summary>
-    private static double? EstimateLuminance(BitmapSource? capture)
-    {
-        if (capture is null || capture.PixelWidth == 0 || capture.PixelHeight == 0) return null;
-
-        try
-        {
-            // Scaled right down first, so this is a handful of pixels rather than a sweep
-            // over the whole capture on every appearance.
-            const int side = 16;
-            var scaled = new TransformedBitmap(capture,
-                new ScaleTransform((double)side / capture.PixelWidth,
-                                   (double)side / capture.PixelHeight));
-
-            var converted = new FormatConvertedBitmap(scaled, PixelFormats.Bgra32, null, 0);
-            converted.Freeze();
-
-            var width = converted.PixelWidth;
-            var height = converted.PixelHeight;
-            if (width == 0 || height == 0) return null;
-
-            var stride = width * 4;
-            var pixels = new byte[stride * height];
-            converted.CopyPixels(pixels, stride, 0);
-
-            double total = 0;
-            for (var offset = 0; offset < pixels.Length; offset += 4)
-            {
-                // Rec. 601 weights: how bright this reads, not its raw average.
-                total += (0.114 * pixels[offset]       // blue
-                          + 0.587 * pixels[offset + 1] // green
-                          + 0.299 * pixels[offset + 2] // red
-                         ) / 255.0;
-            }
-
-            return total / (width * height);
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
-
     private readonly record struct Bounds(int Left, int Top, int Width, int Height);
 
     /// <summary>
@@ -547,7 +485,7 @@ public partial class WheelWindow : Window
         if (_parentItem is not null)
         {
             HubPrimary.Text = _parentItem.Label;
-            HubSecondary.Text = "Centre to go back";
+            HubSecondary.Text = "Rest here to go back";
             return;
         }
 
@@ -658,13 +596,22 @@ public partial class WheelWindow : Window
         ApplyHover(index);
         UpdateHub();
 
-        // Restart the dwell countdown for drilling into presets.
+        // Restart the dwell countdown, for drilling into presets or backing out of them.
         _dwellTimer.Stop();
         _dwellCandidate = null;
+        _dwellGoesBack = false;
 
         if (index >= 0 && index < _items.Count && _items[index].HasChildren)
         {
             _dwellCandidate = _items[index];
+            _dwellTimer.Start();
+        }
+        else if (index < 0 && _parentRings.Count > 0)
+        {
+            // Going back has to work on hover, for the same reason going in does: the
+            // button is still held, and releasing it to click the hub would end the drag
+            // rather than step back out. Resting in the hub is the way out.
+            _dwellGoesBack = true;
             _dwellTimer.Start();
         }
     }
@@ -672,6 +619,13 @@ public partial class WheelWindow : Window
     private void OnDwellElapsed(object? sender, EventArgs e)
     {
         _dwellTimer.Stop();
+
+        if (_dwellGoesBack)
+        {
+            _dwellGoesBack = false;
+            GoBack();
+            return;
+        }
 
         if (_dwellCandidate is null || !_dwellCandidate.HasChildren) return;
 

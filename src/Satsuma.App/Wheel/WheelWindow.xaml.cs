@@ -258,19 +258,64 @@ public partial class WheelWindow : Window
             BackdropDeep.Source = capture;
             _scrim = GlassTint.For(capture, _settings.EffectiveGlassOpacity);
 
-            // A full ring, so geometry, labels and text shadows are all exercised.
-            _items = Enumerable.Range(0, 6)
-                .Select(i => new WheelItem($"warm{i}", "WARM", WheelKind.Formats, Hint: "warming"))
-                .ToList();
+            // Build the ring the real way rather than fabricating one. This is what pulls
+            // in the job runner and, through it, the hunt for ffmpeg across PATH and the
+            // winget install tree, which is disk work that only happens once.
+            foreach (var category in new[]
+                     {
+                         FileCategory.Image, FileCategory.Video, FileCategory.Audio,
+                         FileCategory.Archive, FileCategory.Folder, FileCategory.Subtitle
+                     })
+            {
+                var sample = new[] { new SourceFile($"warm{category}.tmp") };
+
+                foreach (var kind in new[] { WheelKind.Formats, WheelKind.Tools, WheelKind.Actions })
+                {
+                    _items = _runner.BuildWheel(kind, category, sample);
+                }
+            }
+
+            // Fall back to a full ring if the last build came back empty, so the geometry
+            // and label paths are exercised whatever the machine has installed.
+            if (_items.Count == 0)
+            {
+                _items = Enumerable.Range(0, 6)
+                    .Select(i => new WheelItem($"warm{i}", "WARM", WheelKind.Formats, Hint: "warming"))
+                    .ToList();
+            }
 
             Show();
-            ApplyBounds(new Bounds(-32000, -32000, size, size));
+
+            // On screen, not parked off it. A window placed far outside every monitor can
+            // be skipped by the compositor, which is most of what the first show pays for.
+            // Fully transparent, so there is nothing to see.
+            ApplyBounds(new Bounds(0, 0, size, size));
 
             Render();
             UpdateLayout();
 
-            // Let a real render pass complete before tearing it back down.
+            // Let real render passes complete before tearing it back down.
             Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+            Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+
+            // Touch the drag-data path too. A real drop arrives as a cross-process COM
+            // data object, and the managed wrapper plus the shell clipboard formats
+            // behind it are set up once, on first use. Doing it here cannot cover the
+            // cross-process part, but it does cover the rest.
+            try
+            {
+                var probe = new DataObject();
+                probe.SetFileDropList(new System.Collections.Specialized.StringCollection
+                {
+                    Path.Combine(Path.GetTempPath(), "satsuma-warm.tmp")
+                });
+
+                if (probe.GetDataPresent(DataFormats.FileDrop)) _ = probe.GetData(DataFormats.FileDrop);
+            }
+            catch (Exception)
+            {
+                // Warming is best effort and never worth failing over.
+            }
         }
         catch (Exception ex)
         {
@@ -734,8 +779,30 @@ public partial class WheelWindow : Window
 
     // ---- Drag and drop ---------------------------------------------------
 
+    /// <summary>Set once the first drag event of the process has been timed.</summary>
+    private static bool _timedFirstDragEvent;
+
     private void OnDragOverWheel(object sender, DragEventArgs e)
     {
+        if (!_timedFirstDragEvent)
+        {
+            _timedFirstDragEvent = true;
+
+            // The first drag event in a process is where the cross-process data object is
+            // first marshalled, which no amount of warming inside this process can cover.
+            // Timed so it can be ruled in or out rather than argued about.
+            var firstClock = System.Diagnostics.Stopwatch.StartNew();
+            AdoptDraggedFiles(e);
+            Diagnostics.Log.Write(
+                $"first drag event handled in {firstClock.Elapsed.TotalMilliseconds:0}ms, " +
+                $"files={_files.Count}");
+
+            SetHover(IndexAt(e.GetPosition(RootGrid)));
+            e.Effects = DragDropEffects.Copy;
+            e.Handled = true;
+            return;
+        }
+
         AdoptDraggedFiles(e);
 
         SetHover(IndexAt(e.GetPosition(RootGrid)));

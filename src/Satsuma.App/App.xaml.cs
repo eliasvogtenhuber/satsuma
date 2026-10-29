@@ -54,6 +54,15 @@ public partial class App : Application
         _settings = AppSettings.Load();
         _runner = new JobRunner();
 
+        // Finding ffmpeg walks PATH and the winget install tree, which is disk work that
+        // happens once and would otherwise happen inside the first wheel build. Started
+        // here so it overlaps the rest of startup instead of delaying a drag.
+        Task.Run(() =>
+        {
+            var found = Core.Tools.FfmpegLocator.IsAvailable;
+            Log.Write($"ffmpeg located: {found}");
+        });
+
         _tray = new TrayController(_settings);
         _tray.QuitRequested += (_, _) => Shutdown();
         _tray.ShelfRequested += (_, _) => ShowShelf();

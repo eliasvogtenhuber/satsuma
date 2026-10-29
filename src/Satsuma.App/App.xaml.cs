@@ -77,6 +77,7 @@ public partial class App : Application
         Dispatcher.BeginInvoke(() =>
         {
             _wheel?.Prewarm();
+            TryProbeSelection(e.Args);
             TryShowPreview(e.Args);
         }, DispatcherPriority.ApplicationIdle);
 
@@ -114,6 +115,27 @@ public partial class App : Application
     /// centred on the primary monitor. It exists so the wheel can be looked at and
     /// screenshotted while working on it, since a drag cannot be scripted.
     /// </summary>
+    /// <summary>
+    /// <c>--probe-selection x y</c> reads the Explorer selection at a screen point and
+    /// logs what it found. It exists so the shell lookup can be exercised against a real
+    /// Explorer window without driving the pointer, since the lookup is the one piece a
+    /// click-driven wheel would depend on completely.
+    /// </summary>
+    private static void TryProbeSelection(IReadOnlyList<string> args)
+    {
+        var flag = args.ToList().FindIndex(a =>
+            a.Equals("--probe-selection", StringComparison.OrdinalIgnoreCase));
+
+        if (flag < 0 || args.Count < flag + 3) return;
+        if (!int.TryParse(args[flag + 1], out var x)) return;
+        if (!int.TryParse(args[flag + 2], out var y)) return;
+
+        var found = ShellSelection.FromPoint(x, y);
+
+        Log.Write($"probe result: {found.Count} file(s)");
+        foreach (var file in found) Log.Write($"  {file.Path}");
+    }
+
     private void TryShowPreview(IReadOnlyList<string> args)
     {
         var flag = args.ToList().FindIndex(a =>

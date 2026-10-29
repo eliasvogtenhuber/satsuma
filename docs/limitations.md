@@ -66,14 +66,3 @@ that `Satsuma.exe` itself has the default .NET icon in Explorer. Dropping a real
 `Assets/satsuma.ico` into `src/Satsuma.App` is enough to fix that — the project file picks
 it up if it exists.
 
-## The Explorer selection pre-read usually finds nothing
-
-When a wheel opens, Satsuma tries to read the selection out of the Explorer view the drag
-started in, so the wheel can appear with the right slices already on it. In practice this
-returns nothing most of the time: the shell COM lookup does not reliably match the window
-a drag began in.
-
-It costs nothing, because it no longer runs before the wheel is shown, and it is not
-load-bearing: the real dragged paths arrive from the drop target a frame or two later and
-the wheel rebuilds from those. The visible symptom is that the wheel opens showing "Drop a
-file here" for a moment before the formats appear.

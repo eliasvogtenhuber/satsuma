@@ -1,3 +1,4 @@
+using Satsuma.App.Diagnostics;
 using Satsuma.Core.Model;
 using static Satsuma.App.Interop.NativeMethods;
 
@@ -45,17 +46,27 @@ public static class ShellSelection
     {
         try
         {
-            var window = GetAncestor(WindowFromPoint(new POINT(screenX, screenY)), GA_ROOT);
+            var hit = WindowFromPoint(new POINT(screenX, screenY));
+            var window = GetAncestor(hit, GA_ROOT);
             if (window == IntPtr.Zero) return Array.Empty<SourceFile>();
 
             var className = ClassNameOf(window);
             var isDesktop = className is "Progman" or "WorkerW";
 
-            return Read(window, isDesktop);
+            Log.Write(
+                $"selection probe at {screenX},{screenY}: hit=0x{hit.ToInt64():X} " +
+                $"root=0x{window.ToInt64():X} class={className} desktop={isDesktop}");
+
+            var found = Read(window, isDesktop);
+            Log.Write($"selection probe found {found.Count} file(s)");
+            return found;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // Shell COM is allowed to fail; the drop path will fill the wheel instead.
+            // Logged rather than swallowed silently: this catch hid the real reason the
+            // lookup was coming back empty for a long time.
+            Log.Write($"selection probe threw: {ex.GetType().Name}: {ex.Message}");
             return Array.Empty<SourceFile>();
         }
     }
@@ -74,10 +85,28 @@ public static class ShellSelection
             dynamic windows = shell.Windows();
             int count = windows.Count;
 
+            Log.Write(
+                $"shell views: {count}, looking for 0x{sourceWindow.ToInt64():X}, " +
+                $"apartment={Thread.CurrentThread.GetApartmentState()}");
+
             // Pass one: the shell view whose window is the one the drag began in.
+            //
+            // Every tab of a Windows 11 Explorer window reports that window's handle, so
+            // matching on the handle alone can yield half a dozen views, all but one of
+            // them an inactive tab with nothing selected. Taking the first match read the
+            // wrong tab almost every time, which is why this used to come back empty.
+            // The view that has a selection is the one the user is working in.
             for (var index = 0; index < count; index++)
             {
-                var paths = TryReadWindow(windows, index, sourceWindow, matchHandle: true);
+                // Typed explicitly, not var. TryReadWindow takes a dynamic parameter, so
+                // its call site binds dynamically and its result is dynamic too; reading
+                // .Count off that resolved against SourceFile[] at runtime, where Count is
+                // an explicit interface implementation the binder cannot see. It threw on
+                // the first view that did not match, which aborted the whole scan and is
+                // why this always came back empty.
+                IReadOnlyList<SourceFile> paths =
+                    TryReadWindow(windows, index, sourceWindow, matchHandle: true);
+
                 if (paths.Count > 0) return paths;
             }
 
@@ -88,7 +117,9 @@ public static class ShellSelection
             {
                 for (var index = 0; index < count; index++)
                 {
-                    var paths = TryReadWindow(windows, index, sourceWindow, matchHandle: false);
+                    IReadOnlyList<SourceFile> paths =
+                        TryReadWindow(windows, index, sourceWindow, matchHandle: false);
+
                     if (paths.Count > 0) return paths;
                 }
             }
@@ -112,6 +143,10 @@ public static class ShellSelection
             if (matchHandle)
             {
                 var handle = new IntPtr(Convert.ToInt64(window.HWND));
+
+                Log.Write($"  view {index}: hwnd=0x{handle.ToInt64():X} " +
+                          $"match={handle == sourceWindow}");
+
                 if (handle != sourceWindow) return Array.Empty<SourceFile>();
             }
 
@@ -136,11 +171,17 @@ public static class ShellSelection
                 }
             }
 
+            if (files.Count > 0)
+            {
+                Log.Write($"  view {index}: {files.Count} selected");
+            }
+
             return files;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // Not an Explorer view, or it went away mid-read.
+            Log.Write($"  view {index}: {ex.GetType().Name} {ex.Message}");
             return Array.Empty<SourceFile>();
         }
     }

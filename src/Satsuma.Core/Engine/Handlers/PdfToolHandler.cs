@@ -59,44 +59,129 @@ public sealed class PdfToolHandler : IJobHandler
         return JobResult.Ok(target);
     }
 
+    /// <summary>
+    /// Cuts one PDF into several, where the slice says.
+    ///
+    /// Beyond a handful of pieces the results go into a new folder beside the original
+    /// rather than loose next to it. One file per page is a legitimate thing to want, but
+    /// a 300-page report done that way buries the folder it came from, and there is no
+    /// undo for 300 files.
+    /// </summary>
     private static async Task<JobResult> SplitAsync(
         JobRequest request, IProgress<double>? progress, CancellationToken cancellationToken)
     {
         var source = request.Files[0];
+        var options = request.Item.Options;
+        options.TryGetValue(WheelItem.CustomOption, out var typed);
 
-        var outputs = await Task.Run(() =>
+        var result = await Task.Run(() =>
         {
-            var written = new List<string>();
-
             using var document = PdfDocument.Open(source.Path);
             var count = document.NumberOfPages;
 
-            if (count <= 1) return written;
+            if (count <= 1) return JobResult.Fail("Nothing to split: this PDF has a single page.");
 
-            var padding = Math.Max(2, count.ToString(CultureInfo.InvariantCulture).Length);
+            var parts = Parts(options, typed, count);
 
-            for (var page = 1; page <= count; page++)
+            if (parts.Count <= 1)
+            {
+                return JobResult.Fail(
+                    $"That leaves the PDF in one piece. It has {count} pages.");
+            }
+
+            // Loose beside the original while they are still countable at a glance;
+            // in their own folder once they are not.
+            var folder = parts.Count > 4 ? OutputNaming.NextDirectory(source.Path, "pages") : null;
+            if (folder is not null) Directory.CreateDirectory(folder);
+
+            var padding = count.ToString(CultureInfo.InvariantCulture).Length;
+            var baseName = Path.GetFileNameWithoutExtension(source.Path);
+            var written = new List<string>();
+
+            for (var index = 0; index < parts.Count; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                var (first, last) = parts[index];
                 var builder = new PdfDocumentBuilder();
-                builder.AddPage(document, page);
 
-                var target = OutputNaming.Next(
-                    source.Path, ".pdf", page.ToString("D" + padding, CultureInfo.InvariantCulture));
+                for (var page = first; page <= last; page++)
+                {
+                    builder.AddPage(document, page);
+                }
+
+                var label = Label(first, last, padding);
+                var target = folder is null
+                    ? OutputNaming.Next(source.Path, ".pdf", label)
+                    : OutputNaming.NextIn(folder, baseName, ".pdf", label);
 
                 File.WriteAllBytes(target, builder.Build());
                 written.Add(target);
 
-                progress?.Report(page / (double)count);
+                progress?.Report((index + 1) / (double)parts.Count);
             }
 
-            return written;
+            return JobResult.Ok(written);
         }, cancellationToken).ConfigureAwait(false);
 
-        return outputs.Count == 0
-            ? JobResult.Fail("Nothing to split: this PDF has a single page.")
-            : JobResult.Ok(outputs);
+        return result;
+    }
+
+    /// <summary>
+    /// The page spans each output file covers, from whichever way the slice asked for.
+    /// </summary>
+    private static List<(int First, int Last)> Parts(
+        IReadOnlyDictionary<string, string> options, string? typed, int count)
+    {
+        if (typed is not null && CustomInput.TryParseSplitPoints(typed, count, out var cuts))
+        {
+            return FromCuts(cuts, count);
+        }
+
+        var chunk = ReadInt(options, "chunk");
+        if (chunk is > 0)
+        {
+            var parts = new List<(int, int)>();
+            for (var first = 1; first <= count; first += chunk.Value)
+            {
+                parts.Add((first, Math.Min(count, first + chunk.Value - 1)));
+            }
+
+            return parts;
+        }
+
+        // "In half", and the fallback: the smallest, least surprising result there is.
+        var middle = (count + 1) / 2;
+        return FromCuts(new[] { middle + 1 }, count);
+    }
+
+    /// <summary>Turns the pages to cut before into the spans between them.</summary>
+    private static List<(int First, int Last)> FromCuts(IReadOnlyList<int> cuts, int count)
+    {
+        var parts = new List<(int, int)>();
+        var first = 1;
+
+        foreach (var cut in cuts)
+        {
+            if (cut <= first || cut > count) continue;
+
+            parts.Add((first, cut - 1));
+            first = cut;
+        }
+
+        parts.Add((first, count));
+        return parts;
+    }
+
+    /// <summary>
+    /// Named after the pages inside, zero-padded so the pieces sort in reading order.
+    /// </summary>
+    private static string Label(int first, int last, int padding)
+    {
+        var from = first.ToString("D" + padding, CultureInfo.InvariantCulture);
+        return first == last
+            ? "p" + from
+            : $"p{from}-{last.ToString("D" + padding, CultureInfo.InvariantCulture)}";
     }
 
     /// <summary>

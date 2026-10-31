@@ -382,9 +382,10 @@ public partial class App : Application
     /// </summary>
     private static Task<string?> AskForAsync(InputRequest request, WheelChoice choice)
     {
-        // Page ranges are checked against the document as they are typed, which needs to
+        // Page numbers are checked against the document as they are typed, which needs to
         // know how long it is.
-        var pageCount = request.Kind == InputKind.PageRange && choice.Files.Count > 0
+        var needsPages = request.Kind is InputKind.PageRange or InputKind.SplitPoints;
+        var pageCount = needsPages && choice.Files.Count > 0
             ? SafePageCount(choice.Files[0].Path)
             : 1;
 

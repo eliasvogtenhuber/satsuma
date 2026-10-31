@@ -18,7 +18,10 @@ public enum InputKind
     Speed,
 
     /// <summary>Page numbers and ranges.</summary>
-    PageRange
+    PageRange,
+
+    /// <summary>Page numbers to cut a document before.</summary>
+    SplitPoints
 }
 
 /// <summary>
@@ -212,6 +215,41 @@ public static class CustomInput
         return true;
     }
 
+    /// <summary>
+    /// Page numbers to cut before: "12", or "5,12,30" for several cuts.
+    ///
+    /// Each number starts a new file, which is why page 1 is not a cut — there is nothing
+    /// before it to cut off — and nor is anything past the last page. Cuts out of range
+    /// are dropped rather than refused, the way a page range drops them, so pasting a
+    /// chapter list from a longer edition still does something sensible.
+    /// </summary>
+    public static bool TryParseSplitPoints(string? text, int pageCount, out IReadOnlyList<int> cuts)
+    {
+        cuts = Array.Empty<int>();
+
+        var value = Clean(text);
+        if (value.Length == 0 || pageCount <= 1) return false;
+
+        var chosen = new SortedSet<int>();
+
+        foreach (var part in value.Split(
+            new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!int.TryParse(
+                part.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var page))
+            {
+                return false;
+            }
+
+            if (page >= 2 && page <= pageCount) chosen.Add(page);
+        }
+
+        if (chosen.Count == 0) return false;
+
+        cuts = chosen.ToList();
+        return true;
+    }
+
     /// <summary>True when a value would be accepted, for checking as it is typed.</summary>
     public static bool IsValid(InputKind kind, string? text, int pageCount = 1) => kind switch
     {
@@ -220,6 +258,7 @@ public static class CustomInput
         InputKind.Bitrate => TryParseBitrate(text, out _),
         InputKind.Speed => TryParseSpeed(text, out _),
         InputKind.PageRange => TryParsePageRange(text, pageCount, out _),
+        InputKind.SplitPoints => TryParseSplitPoints(text, pageCount, out _),
         _ => false
     };
 

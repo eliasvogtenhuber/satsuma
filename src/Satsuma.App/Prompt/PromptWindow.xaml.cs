@@ -108,6 +108,8 @@ public partial class PromptWindow : Window
     /// </summary>
     public void ShowAtCursor()
     {
+        FitToContent();
+
         GetCursorPos(out var cursor);
 
         var scale = DpiAt(cursor) / 96.0;
@@ -138,6 +140,23 @@ public partial class PromptWindow : Window
 
         var handle = new WindowInteropHelper(this).Handle;
         SetWindowPos(handle, HWND_TOPMOST, left, top, width, height, SWP_SHOWWINDOW);
+    }
+
+    /// <summary>
+    /// Grows the card to whatever the question needs.
+    ///
+    /// The width is fixed, so the hint wraps to a height that depends on how long it is;
+    /// a fixed window height either clips the longer questions or leaves a gap under the
+    /// short ones. Measuring is done here rather than with SizeToContent because the
+    /// window is placed by hand, and the placement needs the size before the window is
+    /// shown — otherwise the glass backdrop is captured for the wrong rectangle.
+    /// </summary>
+    private void FitToContent()
+    {
+        Root.Measure(new Size(Width, double.PositiveInfinity));
+
+        // Never smaller than designed: a one-line question still wants room to breathe.
+        Height = Math.Max(Height, Math.Ceiling(Root.DesiredSize.Height));
     }
 
     private static Brush Freeze(Brush brush)

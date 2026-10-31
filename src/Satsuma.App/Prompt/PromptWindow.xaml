@@ -11,13 +11,17 @@
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
         FontFamily="Segoe UI Variable Text, Segoe UI"
-        Width="340" Height="150">
+        Width="360" Height="160">
 
     <!-- The same glass as the wheel and the progress card. Unlike those, this one does
          take focus: by the time it appears the drop has happened and the drag is over,
-         and it cannot be typed into otherwise. -->
+         and it cannot be typed into otherwise.
 
-    <Grid Margin="10">
+         Height is a starting point, not the final one: the hint wraps, so how tall the
+         card needs to be depends on the question. ShowAtCursor measures the content and
+         sets the real height before showing. -->
+
+    <Grid x:Name="Root" Margin="10">
         <Border CornerRadius="14" Background="#8A000000">
             <Border.Effect>
                 <DropShadowEffect BlurRadius="22" ShadowDepth="4" Direction="270"
@@ -67,14 +71,14 @@
                          Background="Transparent" BorderThickness="0"
                          Foreground="#FFFFFF" CaretBrush="#FFFFFF"
                          SelectionBrush="#66FFFFFF"
-                         FontSize="14" Padding="10,7"
+                         FontSize="14" Padding="10,7" MinHeight="34"
                          VerticalContentAlignment="Center" />
             </Border>
 
             <TextBlock x:Name="FooterText"
                        Text="Enter to apply, Esc to cancel"
                        FontSize="9.5" Foreground="#8C8C8C"
-                       Margin="0,9,0,0" />
+                       Margin="0,9,0,0" TextWrapping="Wrap" />
         </StackPanel>
     </Grid>
 </Window>

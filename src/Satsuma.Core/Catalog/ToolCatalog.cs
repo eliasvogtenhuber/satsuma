@@ -135,7 +135,20 @@ public static class ToolCatalog
         {
             Tool("tool.pdf.compress", "Compress", children: QualityPresets("tool.pdf.compress")),
             Tool("tool.pdf.merge", "Merge", "All PDFs into one"),
-            Tool("tool.pdf.split", "Split", "One file per page"),
+
+            // Split asks where, rather than assuming one file per page. On a contract or
+            // a couple of scans that assumption is fine; on a 300-page report it empties
+            // itself over the folder and there is no undo.
+            Tool("tool.pdf.split", "Split", "Pick where", children: new[]
+            {
+                Tool("tool.pdf.split.half", "In half", "Two files", new() { ["at"] = "half" }),
+                Tool("tool.pdf.split.10", "Every 10 pages", options: new() { ["chunk"] = "10" }),
+                Tool("tool.pdf.split.1", "Every page", "One file each", new() { ["chunk"] = "1" }),
+                Custom("tool.pdf.split.custom", new InputRequest(
+                    "Split before", "Page numbers to cut at, as in 5 or 5,12,30",
+                    InputKind.SplitPoints) { Placeholder = "12" }),
+            }),
+
             new WheelItem("tool.pdf.pages", "Keep pages", WheelKind.Tools,
                 Hint: "A range, into one PDF")
             {

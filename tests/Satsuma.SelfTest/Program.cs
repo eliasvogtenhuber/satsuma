@@ -128,6 +128,17 @@ internal static class Program
         Check("past the end is trimmed", Pages("9-20", 10) is [9, 10], "clamped to the document");
         Check("entirely past the end is refused", Pages("20-30", 10) is null, "no pages matched");
 
+        // Split points, which are page numbers to cut before rather than pages to keep.
+        Check("one cut", Cuts("5", 10) is [5], "5");
+        Check("several cuts", Cuts("3,6,9", 10) is [3, 6, 9], "3,6,9");
+        Check("cuts may be spaced", Cuts("3 6 9", 10) is [3, 6, 9], "spaces separate too");
+        Check("cutting before page one does nothing", Cuts("1", 10) is null,
+            "nothing precedes page 1");
+        Check("cuts are sorted and deduplicated", Cuts("7,3,7", 10) is [3, 7], "3, 7");
+        Check("cuts past the end are dropped", Cuts("4,40", 10) is [4], "4 survives");
+        Check("a single page cannot be cut", Cuts("2", 1) is null, "one page, no cuts");
+        Check("a range is not a cut point", Cuts("3-6", 10) is null, "cuts are single numbers");
+
         return;
 
         static SizeRequest? Size(string text) =>
@@ -135,6 +146,9 @@ internal static class Program
 
         static IReadOnlyList<int>? Pages(string text, int count) =>
             CustomInput.TryParsePageRange(text, count, out var pages) ? pages : null;
+
+        static IReadOnlyList<int>? Cuts(string text, int count) =>
+            CustomInput.TryParseSplitPoints(text, count, out var cuts) ? cuts : null;
     }
 
     // ---- Office ------------------------------------------------------------
@@ -380,7 +394,7 @@ internal static class Program
         var tools = ToolCatalog.For(FileCategory.Pdf);
 
         // Split, then merge the halves back, which checks both against each other.
-        var split = await Run(Leaf(tools, "tool.pdf.split"),
+        var split = await Run(Leaf(tools, "tool.pdf.split.1"),
             new[] { new SourceFile(pdf) }, FileCategory.Pdf);
 
         Check("PDF -> one file per page", split.Outputs.Count == 2, Describe(split));
@@ -399,6 +413,8 @@ internal static class Program
                 merged.Outputs.Count == 1 && PdfRenderer.PageCount(merged.Outputs[0]) == 2,
                 Describe(merged));
         }
+
+        await TestSplitting(workspace, pdf, tools);
 
         // Keeping a range, which is what people usually mean by splitting a PDF.
         var keep = Leaf(tools, "tool.pdf.pages") with
@@ -490,6 +506,114 @@ internal static class Program
         Check("DOCX, PPTX and XLSX stay hidden",
             !offered.Any(i => i.OutputExtension is ".docx" or ".pptx" or ".xlsx"),
             "not offered until they can be done properly");
+    }
+
+    /// <summary>
+    /// The ways of cutting one PDF into several, against a document long enough for them
+    /// to differ — which is also where one-file-per-page stops being a sensible default.
+    /// </summary>
+    private static async Task TestSplitting(
+        string workspace, string twoPager, IReadOnlyList<WheelItem> tools)
+    {
+        // Four copies of the two-pager merged into one eight-page document.
+        var copies = new List<SourceFile>();
+        for (var index = 1; index <= 4; index++)
+        {
+            var copy = Path.Combine(workspace, $"pdf-part-{index}.pdf");
+            File.Copy(twoPager, copy, overwrite: true);
+            copies.Add(new SourceFile(copy));
+        }
+
+        var built = await Run(Leaf(tools, "tool.pdf.merge"), copies, FileCategory.Pdf);
+        if (built.Outputs.Count != 1) return;
+
+        var long8 = built.Outputs[0];
+        Check("an eight-page document to split", PdfRenderer.PageCount(long8) == 8,
+            $"{PdfRenderer.PageCount(long8)} pages");
+
+        var half = await Run(Leaf(tools, "tool.pdf.split.half"),
+            new[] { new SourceFile(long8) }, FileCategory.Pdf);
+
+        Check("split in half", half.Outputs.Count == 2, Describe(half));
+
+        if (half.Outputs.Count == 2)
+        {
+            Check("the halves are four pages each",
+                PdfRenderer.PageCount(half.Outputs[0]) == 4
+                && PdfRenderer.PageCount(half.Outputs[1]) == 4,
+                "4 + 4");
+
+            Check("two pieces stay beside the original",
+                Path.GetDirectoryName(half.Outputs[0]) == Path.GetDirectoryName(long8),
+                "no folder for a pair");
+        }
+
+        // Chunks, which is the answer to a long document.
+        var chunked = await Run(
+            Leaf(tools, "tool.pdf.split.1") with
+            {
+                Options = new Dictionary<string, string> { ["chunk"] = "3" }
+            },
+            new[] { new SourceFile(long8) }, FileCategory.Pdf);
+
+        Check("every three pages", chunked.Outputs.Count == 3, Describe(chunked));
+
+        if (chunked.Outputs.Count == 3)
+        {
+            Check("the last chunk takes what is left",
+                PdfRenderer.PageCount(chunked.Outputs[0]) == 3
+                && PdfRenderer.PageCount(chunked.Outputs[1]) == 3
+                && PdfRenderer.PageCount(chunked.Outputs[2]) == 2,
+                "3 + 3 + 2");
+        }
+
+        // One file per page on a long document: the pieces go into their own folder
+        // rather than over the folder the PDF was sitting in.
+        var each = await Run(Leaf(tools, "tool.pdf.split.1"),
+            new[] { new SourceFile(long8) }, FileCategory.Pdf);
+
+        Check("every page", each.Outputs.Count == 8, Describe(each));
+
+        if (each.Outputs.Count == 8)
+        {
+            var home = Path.GetDirectoryName(each.Outputs[0]);
+
+            Check("many pieces go into their own folder",
+                home != Path.GetDirectoryName(long8)
+                && each.Outputs.All(p => Path.GetDirectoryName(p) == home),
+                Path.GetFileName(home) ?? "nowhere");
+
+            Check("the pieces sort in reading order",
+                each.Outputs.OrderBy(p => p, StringComparer.Ordinal).SequenceEqual(each.Outputs),
+                "zero-padded page numbers");
+        }
+
+        // Typed cut points.
+        var cut = await Run(
+            Leaf(tools, "tool.pdf.split.custom") with
+            {
+                Options = new Dictionary<string, string> { [WheelItem.CustomOption] = "3,6" }
+            },
+            new[] { new SourceFile(long8) }, FileCategory.Pdf);
+
+        Check("cutting before chosen pages", cut.Outputs.Count == 3, Describe(cut));
+
+        if (cut.Outputs.Count == 3)
+        {
+            Check("the cuts land where asked",
+                PdfRenderer.PageCount(cut.Outputs[0]) == 2
+                && PdfRenderer.PageCount(cut.Outputs[1]) == 3
+                && PdfRenderer.PageCount(cut.Outputs[2]) == 3,
+                "1-2, 3-5, 6-8");
+        }
+
+        // A chunk bigger than the document would hand back the document.
+        var pointless = await Run(Leaf(tools, "tool.pdf.split.10"),
+            new[] { new SourceFile(long8) }, FileCategory.Pdf);
+
+        Check("a split that would not split is refused",
+            pointless.Outputs.Count == 0 && pointless.Failures.Count == 1,
+            pointless.Failures.Count > 0 ? pointless.Failures[0] : "wrote a copy anyway");
     }
 
     /// <summary>

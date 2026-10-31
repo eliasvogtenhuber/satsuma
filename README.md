@@ -88,12 +88,22 @@ compress, resize, speed, rotate, remove audio, snapshot, extract audio, join. Au
 compress, normalise, to mono, strip tags, join. PDF: merge, split, keep a page range,
 compress.
 
+**Splitting a PDF** asks where: in half, every ten pages, every page, or before page
+numbers you type. One file per page is on the ring but it is not the default, because a
+300-page report done that way empties itself over the folder it was sitting in and there
+is no undo for 300 files. Past four pieces the results go into a new folder beside the
+original instead of loose next to it, named after the page numbers inside so they sort in
+reading order. **Keep pages** is the other half of the same job: a range into one new PDF,
+which is what people usually mean by splitting one.
+
 **Custom values.** Presets answer what most people want; every preset ring also has a
 **Custom** slice for the value only you know. It asks after the drop, because the wheel
 itself can never be typed into — taking focus would cancel the drag it lives inside.
-Sizes take a percentage, a long edge or exact dimensions (`50%`, `1080`, `1200x800`), and
-PDF page ranges take numbers and ranges (`3-7`, `2,5,9-12`, `8-`). What you type is checked
-as you type it.
+Sizes take a percentage, a long edge or exact dimensions (`50%`, `1080`, `1200x800`), PDF
+page ranges take numbers and ranges (`3-7`, `2,5,9-12`, `8-`), and split points take the
+pages to cut before (`12`, `5,12,30`). What you type is checked as you type it, against
+the document where that matters: a page number this PDF does not have is refused before
+Enter rather than after.
 
 The wheel only ever shows conversions that actually work on your machine. Each one is
 claimed by a handler, and a format no handler can do is never drawn — so if ffmpeg or

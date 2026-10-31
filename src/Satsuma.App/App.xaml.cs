@@ -358,7 +358,7 @@ public partial class App : Application
         // so a window can take focus and be typed into.
         if (choice.Item.Input is { } request)
         {
-            var answer = AskFor(request, choice);
+            var answer = await AskForAsync(request, choice);
             if (answer is null) return;   // changed their mind
 
             var options = new Dictionary<string, string>(choice.Item.Options)
@@ -374,8 +374,13 @@ public partial class App : Application
 
     /// <summary>
     /// Puts the question up and waits for the answer, or null if it was cancelled.
+    ///
+    /// Awaited rather than pumped. A nested message loop would block this one while the
+    /// input hooks are still posting into it, and anything that stopped the window
+    /// closing would take the whole app with it. Awaiting keeps the dispatcher running
+    /// and has no way to hang.
     /// </summary>
-    private static string? AskFor(InputRequest request, WheelChoice choice)
+    private static Task<string?> AskForAsync(InputRequest request, WheelChoice choice)
     {
         // Page ranges are checked against the document as they are typed, which needs to
         // know how long it is.
@@ -383,15 +388,23 @@ public partial class App : Application
             ? SafePageCount(choice.Files[0].Path)
             : 1;
 
-        var prompt = new PromptWindow(request, pageCount);
-        prompt.ShowAtCursor();
+        var answered = new TaskCompletionSource<string?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // Modal, so the job runs with an answer rather than without one.
-        var done = new System.Windows.Threading.DispatcherFrame();
-        prompt.Closed += (_, _) => done.Continue = false;
-        System.Windows.Threading.Dispatcher.PushFrame(done);
+        try
+        {
+            var prompt = new PromptWindow(request, pageCount);
+            prompt.Closed += (_, _) => answered.TrySetResult(prompt.Answer);
 
-        return prompt.Answer;
+            prompt.ShowAtCursor();
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"could not ask for a value: {ex.Message}");
+            answered.TrySetResult(null);
+        }
+
+        return answered.Task;
     }
 
     private static int SafePageCount(string path)

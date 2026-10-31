@@ -20,7 +20,7 @@ public sealed class PdfToolHandler : IJobHandler
         return Operation(request.Item.Id) switch
         {
             "merge" => request.Files.Count > 1,
-            "split" or "compress" => true,
+            "split" or "compress" or "pages" => true,
             _ => false
         };
     }
@@ -36,6 +36,7 @@ public sealed class PdfToolHandler : IJobHandler
             "merge" => await MergeAsync(request, progress, cancellationToken).ConfigureAwait(false),
             "split" => await SplitAsync(request, progress, cancellationToken).ConfigureAwait(false),
             "compress" => await CompressAsync(request, progress, cancellationToken).ConfigureAwait(false),
+            "pages" => await KeepPagesAsync(request, progress, cancellationToken).ConfigureAwait(false),
             _ => JobResult.Fail($"Unknown PDF tool {request.Item.Id}.")
         };
     }
@@ -99,6 +100,59 @@ public sealed class PdfToolHandler : IJobHandler
     }
 
     /// <summary>
+    /// Keeps a range of pages and discards the rest, into one new PDF.
+    ///
+    /// This is what people usually mean by splitting a PDF: not one file per page, but
+    /// the handful of pages worth keeping. It needs page numbers, which no preset can
+    /// guess, so the slice asks for them.
+    /// </summary>
+    private static async Task<JobResult> KeepPagesAsync(
+        JobRequest request, IProgress<double>? progress, CancellationToken cancellationToken)
+    {
+        var source = request.Files[0];
+
+        if (!request.Item.Options.TryGetValue(WheelItem.CustomOption, out var typed))
+        {
+            return JobResult.Fail("No pages were given.");
+        }
+
+        var result = await Task.Run(() =>
+        {
+            using var document = PdfDocument.Open(source.Path);
+            var count = document.NumberOfPages;
+
+            if (!CustomInput.TryParsePageRange(typed, count, out var pages))
+            {
+                return JobResult.Fail(count == 1
+                    ? "This PDF has a single page."
+                    : $"No pages matched. This PDF has {count}.");
+            }
+
+            var builder = new PdfDocumentBuilder();
+
+            for (var index = 0; index < pages.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                builder.AddPage(document, pages[index]);
+                progress?.Report((index + 1) / (double)pages.Count);
+            }
+
+            // Named after what was kept, so several goes at one PDF do not collide.
+            var label = pages.Count == 1
+                ? $"p{pages[0]}"
+                : $"p{pages[0]}-{pages[^1]}";
+
+            var target = OutputNaming.Next(source.Path, ".pdf", label);
+            File.WriteAllBytes(target, builder.Build());
+
+            return JobResult.Ok(target);
+        }, cancellationToken).ConfigureAwait(false);
+
+        return result;
+    }
+
+    /// <summary>
     /// Compresses by rasterising.
     ///
     /// This is worth being plain about: the pages are rendered and re-encoded as JPEG, so
@@ -112,7 +166,11 @@ public sealed class PdfToolHandler : IJobHandler
         JobRequest request, IProgress<double>? progress, CancellationToken cancellationToken)
     {
         var source = request.Files[0];
-        var quality = ReadInt(request.Item.Options, "quality") ?? 75;
+        var options = request.Item.Options;
+        var quality = options.TryGetValue(WheelItem.CustomOption, out var typed)
+                      && CustomInput.TryParseQuality(typed, out var custom)
+            ? custom
+            : ReadInt(options, "quality") ?? 75;
 
         // Lower quality also means fewer pixels: at the strong end the resolution is what
         // dominates the size, not the JPEG table.
@@ -174,7 +232,7 @@ public sealed class PdfToolHandler : IJobHandler
         if (!id.StartsWith(Prefix, StringComparison.Ordinal)) return null;
 
         var operation = id[Prefix.Length..].Split('.')[0];
-        return operation is "merge" or "split" or "compress" ? operation : null;
+        return operation is "merge" or "split" or "compress" or "pages" ? operation : null;
     }
 
     private static int? ReadInt(IReadOnlyDictionary<string, string> options, string key) =>

@@ -50,6 +50,15 @@ public sealed record WheelItem(
     /// <summary>Items that replace this one when it is opened, for presets like Compress.</summary>
     public IReadOnlyList<WheelItem> Children { get; init; } = Array.Empty<WheelItem>();
 
+    /// <summary>
+    /// A value this item needs before it can run. Presets cover the common answers; this
+    /// is for the ones only the user knows.
+    /// </summary>
+    public InputRequest? Input { get; init; }
+
+    /// <summary>The option a typed answer fills in.</summary>
+    public const string CustomOption = "custom";
+
     public bool HasChildren => Children.Count > 0;
 }
 

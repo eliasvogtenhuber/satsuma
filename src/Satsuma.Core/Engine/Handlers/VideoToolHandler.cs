@@ -50,7 +50,12 @@ public sealed class VideoToolHandler : MediaHandlerBase, IJobHandler
         {
             case "compress":
             {
-                var crf = ReadInt(options, "crf") ?? 30;
+                // A typed quality is 1..100 where higher is better; x264 counts the
+                // other way, so it is mapped rather than passed straight through.
+                var crf = options.TryGetValue(WheelItem.CustomOption, out var typedQuality)
+                          && CustomInput.TryParseQuality(typedQuality, out var quality)
+                    ? (int)Math.Round(51 - quality * 0.45)
+                    : ReadInt(options, "crf") ?? 30;
                 target = OutputNaming.Next(source.Path, sourceExtension, "compressed");
                 args = new List<string>
                 {
@@ -66,14 +71,30 @@ public sealed class VideoToolHandler : MediaHandlerBase, IJobHandler
 
             case "resize":
             {
-                var scale = ReadDouble(options, "scale");
-                var longEdge = ReadInt(options, "longEdge");
+                var typedSize = options.TryGetValue(WheelItem.CustomOption, out var sizeText)
+                                && CustomInput.TryParseSize(sizeText, out var parsed)
+                    ? parsed
+                    : (SizeRequest?)null;
+
+                var scale = typedSize?.Scale ?? ReadDouble(options, "scale");
+                var longEdge = typedSize?.LongEdge ?? ReadInt(options, "longEdge");
+                var exact = typedSize?.IsExact == true ? typedSize : null;
 
                 // -2 keeps the other edge even, which h264's yuv420p requires.
                 string filter;
                 string suffix;
 
-                if (scale is not null)
+                if (exact is not null)
+                {
+                    // Rounded down to even, which is what yuv420p needs; an odd
+                    // dimension is rejected by the encoder outright.
+                    var width = exact.Value.Width!.Value / 2 * 2;
+                    var height = exact.Value.Height!.Value / 2 * 2;
+
+                    filter = $"scale={width}:{height}";
+                    suffix = $"{width}x{height}";
+                }
+                else if (scale is not null)
                 {
                     filter = $"scale=trunc(iw*{Num(scale.Value)}/2)*2:trunc(ih*{Num(scale.Value)}/2)*2";
                     suffix = $"{(int)Math.Round(scale.Value * 100)}pct";
@@ -102,7 +123,10 @@ public sealed class VideoToolHandler : MediaHandlerBase, IJobHandler
 
             case "speed":
             {
-                var factor = ReadDouble(options, "factor") ?? 2.0;
+                var factor = options.TryGetValue(WheelItem.CustomOption, out var speedText)
+                             && CustomInput.TryParseSpeed(speedText, out var typedSpeed)
+                    ? typedSpeed
+                    : ReadDouble(options, "factor") ?? 2.0;
                 if (factor <= 0) return JobResult.Fail("Speed factor must be positive.");
 
                 target = OutputNaming.Next(source.Path, sourceExtension, $"{Num(factor)}x");

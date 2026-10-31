@@ -4,6 +4,7 @@ using Satsuma.App.Actions;
 using Satsuma.App.Diagnostics;
 using Satsuma.App.Interop;
 using Satsuma.App.Progress;
+using Satsuma.App.Prompt;
 using Satsuma.App.Settings;
 using Satsuma.App.Shelf;
 using Satsuma.App.Tray;
@@ -353,7 +354,56 @@ public partial class App : Application
             return;
         }
 
+        // A slice that needs a value asks for it now. The wheel is gone by this point,
+        // so a window can take focus and be typed into.
+        if (choice.Item.Input is { } request)
+        {
+            var answer = AskFor(request, choice);
+            if (answer is null) return;   // changed their mind
+
+            var options = new Dictionary<string, string>(choice.Item.Options)
+            {
+                [WheelItem.CustomOption] = answer
+            };
+
+            choice = choice with { Item = choice.Item with { Options = options } };
+        }
+
         await RunJobAsync(choice);
+    }
+
+    /// <summary>
+    /// Puts the question up and waits for the answer, or null if it was cancelled.
+    /// </summary>
+    private static string? AskFor(InputRequest request, WheelChoice choice)
+    {
+        // Page ranges are checked against the document as they are typed, which needs to
+        // know how long it is.
+        var pageCount = request.Kind == InputKind.PageRange && choice.Files.Count > 0
+            ? SafePageCount(choice.Files[0].Path)
+            : 1;
+
+        var prompt = new PromptWindow(request, pageCount);
+        prompt.ShowAtCursor();
+
+        // Modal, so the job runs with an answer rather than without one.
+        var done = new System.Windows.Threading.DispatcherFrame();
+        prompt.Closed += (_, _) => done.Continue = false;
+        System.Windows.Threading.Dispatcher.PushFrame(done);
+
+        return prompt.Answer;
+    }
+
+    private static int SafePageCount(string path)
+    {
+        try
+        {
+            return Core.Tools.PdfRenderer.PageCount(path);
+        }
+        catch (Exception)
+        {
+            return 1;
+        }
     }
 
     private void RunAction(WheelChoice choice)

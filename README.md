@@ -85,7 +85,15 @@ Everything below is covered by the self-test suite and verified to run.
 
 **Tools.** Images: compress, resize, rotate, flip, grayscale, strip metadata. Video:
 compress, resize, speed, rotate, remove audio, snapshot, extract audio, join. Audio:
-compress, normalise, to mono, strip tags, join. PDF: merge, split, compress.
+compress, normalise, to mono, strip tags, join. PDF: merge, split, keep a page range,
+compress.
+
+**Custom values.** Presets answer what most people want; every preset ring also has a
+**Custom** slice for the value only you know. It asks after the drop, because the wheel
+itself can never be typed into — taking focus would cancel the drag it lives inside.
+Sizes take a percentage, a long edge or exact dimensions (`50%`, `1080`, `1200x800`), and
+PDF page ranges take numbers and ranges (`3-7`, `2,5,9-12`, `8-`). What you type is checked
+as you type it.
 
 The wheel only ever shows conversions that actually work on your machine. Each one is
 claimed by a handler, and a format no handler can do is never drawn — so if ffmpeg or
@@ -255,6 +263,7 @@ anywhere else work.
 - Markdown out of documents, which LibreOffice has no export filter for
 - Multi-image collages
 - Crop, annotate and redact, which need an editor surface rather than a wheel
+- Trim and split for video and audio, which need the same
 - The Windows share sheet, Tangerine's AirDrop slice — it is WinRT and wants a focused
   window to anchor to, which the wheel deliberately is not
 

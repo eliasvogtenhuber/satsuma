@@ -36,6 +36,7 @@ internal static class Program
 
         try
         {
+            TestCustomInput();
             TestExplorerTitles();
             TestHitTesting();
             await TestWheelBuilding(workspace);
@@ -71,6 +72,69 @@ internal static class Program
         Console.WriteLine($"Output left in {workspace}");
 
         return _failed == 0 ? 0 : 1;
+    }
+
+    // ---- Typed values -------------------------------------------------------
+
+    /// <summary>
+    /// What people type into a Custom slice. Driven directly, because the worth of it is
+    /// in the odd spellings rather than in the window that collects them.
+    /// </summary>
+    private static void TestCustomInput()
+    {
+        Section("Typed values");
+
+        // Sizes, in all the ways a size gets written.
+        Check("a percentage", Size("50%")?.Scale == 0.5, "50% is half");
+        Check("a percentage with a space", Size("50 %")?.Scale == 0.5, "spaces ignored");
+        Check("a bare small number is a percentage", Size("50")?.Scale == 0.5,
+            "nobody types 50 meaning fifty pixels");
+        Check("a bare large number is a long edge", Size("1080")?.LongEdge == 1080,
+            "1080 is a long edge");
+        Check("exact dimensions", Size("1200x800") is { Width: 1200, Height: 800 },
+            "1200x800");
+        Check("exact dimensions with spaces and a cross",
+            Size("1200 × 800") is { Width: 1200, Height: 800 }, "1200 × 800");
+        Check("a decimal comma", Size("12,5%")?.Scale == 0.125, "12,5% is an eighth");
+        Check("nonsense is refused", Size("wide") is null && Size("") is null, "no size");
+        Check("zero is refused", Size("0%") is null, "nothing would be left");
+
+        // Quality.
+        Check("a quality", CustomInput.TryParseQuality("80", out var q) && q == 80, "80");
+        Check("quality is bounded",
+            !CustomInput.TryParseQuality("0", out _) && !CustomInput.TryParseQuality("101", out _),
+            "1 to 100");
+
+        // Bitrate.
+        Check("a bitrate", CustomInput.TryParseBitrate("128", out var b) && b == "128k", "128 -> 128k");
+        Check("a bitrate already in k",
+            CustomInput.TryParseBitrate("96k", out var b2) && b2 == "96k", "96k stays");
+
+        // Speed.
+        Check("a speed", CustomInput.TryParseSpeed("1.5", out var s) && Math.Abs(s - 1.5) < 0.001, "1.5");
+        Check("a speed with an x",
+            CustomInput.TryParseSpeed("2x", out var s2) && Math.Abs(s2 - 2) < 0.001, "2x");
+
+        // Page ranges, which is where the comma means something else entirely.
+        Check("a single page", Pages("3", 10) is [3], "3");
+        Check("a range", Pages("3-5", 10) is [3, 4, 5], "3-5");
+        Check("a list", Pages("1,4,9", 10) is [1, 4, 9], "1,4,9");
+        Check("a list is not a decimal", Pages("2,5", 10) is [2, 5],
+            "2,5 is two pages, not two and a half");
+        Check("open ended upwards", Pages("8-", 10) is [8, 9, 10], "8- to the end");
+        Check("open ended downwards", Pages("-3", 10) is [1, 2, 3], "-3 from the start");
+        Check("mixed and tidied", Pages("5,3,3-4", 10) is [3, 4, 5], "sorted, no repeats");
+        Check("a backwards range still works", Pages("7-5", 10) is [5, 6, 7], "7-5 reads as 5-7");
+        Check("past the end is trimmed", Pages("9-20", 10) is [9, 10], "clamped to the document");
+        Check("entirely past the end is refused", Pages("20-30", 10) is null, "no pages matched");
+
+        return;
+
+        static SizeRequest? Size(string text) =>
+            CustomInput.TryParseSize(text, out var size) ? size : null;
+
+        static IReadOnlyList<int>? Pages(string text, int count) =>
+            CustomInput.TryParsePageRange(text, count, out var pages) ? pages : null;
     }
 
     // ---- Office ------------------------------------------------------------
@@ -335,6 +399,36 @@ internal static class Program
                 merged.Outputs.Count == 1 && PdfRenderer.PageCount(merged.Outputs[0]) == 2,
                 Describe(merged));
         }
+
+        // Keeping a range, which is what people usually mean by splitting a PDF.
+        var keep = Leaf(tools, "tool.pdf.pages") with
+        {
+            Options = new Dictionary<string, string> { [WheelItem.CustomOption] = "2" }
+        };
+
+        var kept = await Run(keep, new[] { new SourceFile(pdf) }, FileCategory.Pdf);
+
+        Check("keep a page range", kept.Outputs.Count == 1, Describe(kept));
+
+        if (kept.Outputs.Count == 1)
+        {
+            Check("only the asked-for page is kept",
+                PdfRenderer.PageCount(kept.Outputs[0]) == 1,
+                $"{PdfRenderer.PageCount(kept.Outputs[0])} of 2 pages");
+        }
+
+        var noSuchPage = await Run(
+            keep with
+            {
+                Options = new Dictionary<string, string> { [WheelItem.CustomOption] = "40-50" }
+            },
+            new[] { new SourceFile(pdf) }, FileCategory.Pdf);
+
+        Check("pages past the end are reported",
+            noSuchPage.Outputs.Count == 0
+            && noSuchPage.Failures.Count == 1
+            && noSuchPage.Failures[0].Contains("No pages matched"),
+            noSuchPage.Failures.Count > 0 ? noSuchPage.Failures[0] : "wrote a file anyway");
 
         // Merge needs more than one file to mean anything.
         var singleMerge = new JobRequest(
@@ -658,6 +752,49 @@ internal static class Program
             Check("rotate swapped the axes",
                 decoded is { PixelWidth: 600, PixelHeight: 800 },
                 decoded is null ? "could not read result" : $"{decoded.PixelWidth}x{decoded.PixelHeight}");
+        }
+
+        // Flipping, checked by where the marked corner ends up rather than by reasoning
+        // about which axis a negative scale negates. "Horizontal" means mirrored
+        // left-to-right, as it does everywhere else.
+        var marked = Path.Combine(workspace, "flip-source.png");
+        WriteCornerMarkedPng(marked, 200, 120);
+
+        var flipH = await RunAndCheck("flip horizontally",
+            Leaf(tools, "tool.img.flip.h"), marked, FileCategory.Image);
+
+        if (flipH.Count == 1)
+        {
+            Check("horizontal flip moves the mark left to right",
+                IsMarked(flipH[0], right: true, bottom: false),
+                DescribeMark(flipH[0]));
+        }
+
+        var flipV = await RunAndCheck("flip vertically",
+            Leaf(tools, "tool.img.flip.v"), marked, FileCategory.Image);
+
+        if (flipV.Count == 1)
+        {
+            Check("vertical flip moves the mark top to bottom",
+                IsMarked(flipV[0], right: false, bottom: true),
+                DescribeMark(flipV[0]));
+        }
+
+        // A typed size, the whole point of the Custom slice.
+        var customResize = Leaf(tools, "tool.img.resize.custom") with
+        {
+            Options = new Dictionary<string, string> { [WheelItem.CustomOption] = "640x360" }
+        };
+
+        var exact = await RunAndCheck("resize to typed dimensions", customResize,
+            source, FileCategory.Image);
+
+        if (exact.Count == 1)
+        {
+            var image = Sta(() => ImageCodec.TryDecode(exact[0], out _));
+            Check("typed dimensions are honoured exactly",
+                image is { PixelWidth: 640, PixelHeight: 360 },
+                image is null ? "unreadable" : $"{image.PixelWidth}x{image.PixelHeight}");
         }
 
         await RunAndCheck("grayscale", Leaf(tools, "tool.img.grayscale"), source, FileCategory.Image);
@@ -1096,6 +1233,88 @@ internal static class Program
     /// <summary>WIC is apartment-threaded, so even the harness has to ask politely.</summary>
     private static T Sta<T>(Func<T> work) =>
         StaExecutor.RunAsync(work).GetAwaiter().GetResult();
+
+    /// <summary>
+    /// A dark image with one bright corner, so a flip can be checked by where the bright
+    /// corner ends up. The mark starts in the top left.
+    /// </summary>
+    private static void WriteCornerMarkedPng(string path, int width, int height)
+    {
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
+
+        var markWidth = width / 4;
+        var markHeight = height / 4;
+
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var offset = y * stride + x * 4;
+                var marked = x < markWidth && y < markHeight;
+
+                pixels[offset + 0] = (byte)(marked ? 255 : 10);
+                pixels[offset + 1] = (byte)(marked ? 255 : 10);
+                pixels[offset + 2] = (byte)(marked ? 255 : 10);
+                pixels[offset + 3] = 255;
+            }
+        }
+
+        Sta(() =>
+        {
+            var bitmap = BitmapSource.Create(width, height, 96, 96,
+                PixelFormats.Bgra32, null, pixels, stride);
+
+            ImageCodec.SaveWithWic(bitmap, path, 100);
+            return true;
+        });
+    }
+
+    /// <summary>Which corner is the bright one.</summary>
+    private static (bool Right, bool Bottom)? FindMark(string path)
+    {
+        // Decoded and read on the same STA thread. A decoded bitmap stays bound to the
+        // thread that read it, so it cannot be decoded here and inspected elsewhere.
+        return Sta<(bool, bool)?>(() =>
+        {
+            var image = ImageCodec.TryDecode(path, out _);
+            if (image is null) return null;
+
+            var converted = new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
+            converted.Freeze();
+
+            var width = converted.PixelWidth;
+            var height = converted.PixelHeight;
+            var stride = width * 4;
+
+            var pixels = new byte[stride * height];
+            converted.CopyPixels(pixels, stride, 0);
+
+            // Sample well inside each corner, away from any resampling at the edges.
+            bool Bright(int x, int y) => pixels[y * stride + x * 4] > 128;
+
+            var inset = Math.Min(width, height) / 10;
+
+            if (Bright(inset, inset)) return (false, false);
+            if (Bright(width - 1 - inset, inset)) return (true, false);
+            if (Bright(inset, height - 1 - inset)) return (false, true);
+            if (Bright(width - 1 - inset, height - 1 - inset)) return (true, true);
+
+            return null;
+        });
+    }
+
+    private static bool IsMarked(string path, bool right, bool bottom) =>
+        FindMark(path) == (right, bottom);
+
+    private static string DescribeMark(string path) => FindMark(path) switch
+    {
+        null => "no mark found",
+        (false, false) => "mark is top left",
+        (true, false) => "mark is top right",
+        (false, true) => "mark is bottom left",
+        (true, true) => "mark is bottom right"
+    };
 
     private static string Kb(long bytes) => $"{bytes / 1024.0:0.#} KB";
 

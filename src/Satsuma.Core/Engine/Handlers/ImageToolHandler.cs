@@ -33,7 +33,7 @@ public sealed class ImageToolHandler : IJobHandler
                         ?? throw new NotSupportedException($"Unknown image tool {item.Id}.");
 
         var options = item.Options;
-        var quality = ReadInt(options, "quality") ?? 92;
+        var quality = ReadQuality(options) ?? 92;
 
         Func<BitmapSource, BitmapSource>? transform = null;
         var stripMetadata = false;
@@ -47,18 +47,28 @@ public sealed class ImageToolHandler : IJobHandler
 
             case "resize":
             {
-                var scale = ReadDouble(options, "scale");
-                var longEdge = ReadInt(options, "longEdge");
+                var size = ReadSize(options);
+                if (size is null) return JobResult.Fail("Resize was asked for without a size.");
 
-                if (scale is not null)
+                var wanted = size.Value;
+
+                if (wanted.IsExact)
                 {
-                    var factor = scale.Value;
+                    var width = wanted.Width!.Value;
+                    var height = wanted.Height!.Value;
+
+                    transform = image => ImageCodec.ScaleTo(image, width, height);
+                    suffix = $"{width}x{height}";
+                }
+                else if (wanted.Scale is not null)
+                {
+                    var factor = wanted.Scale.Value;
                     transform = image => ImageCodec.Scale(image, factor);
                     suffix = $"{(int)Math.Round(factor * 100)}pct";
                 }
-                else if (longEdge is not null)
+                else if (wanted.LongEdge is not null)
                 {
-                    var edge = longEdge.Value;
+                    var edge = wanted.LongEdge.Value;
                     transform = image => ImageCodec.ScaleToLongEdge(image, edge);
                     suffix = $"{edge}p";
                 }
@@ -140,6 +150,39 @@ public sealed class ImageToolHandler : IJobHandler
             "compress" or "resize" or "rotate" or "flip" or "grayscale" or "strip" => operation,
             _ => null
         };
+    }
+
+    /// <summary>
+    /// The size to use: what the user typed, where a Custom slice asked, and otherwise
+    /// whatever the preset carries.
+    /// </summary>
+    /// <summary>A typed quality, or the preset the slice carries.</summary>
+    private static int? ReadQuality(IReadOnlyDictionary<string, string> options)
+    {
+        if (options.TryGetValue(WheelItem.CustomOption, out var typed)
+            && CustomInput.TryParseQuality(typed, out var custom))
+        {
+            return custom;
+        }
+
+        return ReadInt(options, "quality");
+    }
+
+    private static SizeRequest? ReadSize(IReadOnlyDictionary<string, string> options)
+    {
+        if (options.TryGetValue(WheelItem.CustomOption, out var typed)
+            && CustomInput.TryParseSize(typed, out var custom))
+        {
+            return custom;
+        }
+
+        var scale = ReadDouble(options, "scale");
+        if (scale is not null) return new SizeRequest(scale, null, null, null);
+
+        var longEdge = ReadInt(options, "longEdge");
+        if (longEdge is not null) return new SizeRequest(null, longEdge, null, null);
+
+        return null;
     }
 
     private static int? ReadInt(IReadOnlyDictionary<string, string> options, string key) =>

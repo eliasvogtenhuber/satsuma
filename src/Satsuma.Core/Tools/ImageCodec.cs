@@ -67,7 +67,11 @@ public static class ImageCodec
 
             var frame = decoder.Frames[0];
             metadata = TryCloneMetadata(frame);
-            return ApplyExifOrientation(frame, metadata);
+
+            // Frozen before it leaves, so callers cannot mutate it. Note this does not
+            // detach it from the decoder, which stays bound to this thread: the whole
+            // decode, transform and encode happens in one STA call for that reason.
+            return Frozen(ApplyExifOrientation(frame, metadata));
         }
         catch (Exception ex)
         {
@@ -165,6 +169,19 @@ public static class ImageCodec
         if (Math.Abs(factor - 1.0) < 0.0001) return image;
 
         return Freeze(new TransformedBitmap(Frozen(image), new ScaleTransform(factor, factor)));
+    }
+
+    /// <summary>
+    /// Scales to exact dimensions, which is the one resize that does not keep the aspect
+    /// ratio: having been asked for a size, that is what gets written.
+    /// </summary>
+    public static BitmapSource ScaleTo(BitmapSource image, int width, int height)
+    {
+        if (image.PixelWidth == width && image.PixelHeight == height) return image;
+
+        return Freeze(new TransformedBitmap(Frozen(image), new ScaleTransform(
+            width / (double)image.PixelWidth,
+            height / (double)image.PixelHeight)));
     }
 
     /// <summary>Scales so the longer edge becomes <paramref name="longEdge"/> pixels.</summary>

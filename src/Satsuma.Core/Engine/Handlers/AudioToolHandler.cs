@@ -51,7 +51,10 @@ public sealed class AudioToolHandler : MediaHandlerBase, IJobHandler
         {
             case "compress":
             {
-                var bitrate = options.TryGetValue("bitrate", out var value) ? value : "128k";
+                var bitrate = options.TryGetValue(WheelItem.CustomOption, out var typed)
+                              && CustomInput.TryParseBitrate(typed, out var custom)
+                    ? custom
+                    : options.TryGetValue("bitrate", out var value) ? value : "128k";
                 extension = extension is ".wav" or ".flac" or ".aiff" or ".aif" ? ".m4a" : extension;
 
                 target = OutputNaming.Next(source.Path, extension, "compressed");

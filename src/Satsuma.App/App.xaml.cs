@@ -930,8 +930,10 @@ public partial class App : Application
     {
         _shelf ??= new FloatShelfWindow();
 
+        // Reveal rather than Show: the shelf places and reglazes itself, and a bare
+        // Show leaves it wherever WPF last thought it was, which is off screen.
         if (files is not null) _shelf.Add(files);
-        else _shelf.Show();
+        else _shelf.Reveal();
     }
 
     private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

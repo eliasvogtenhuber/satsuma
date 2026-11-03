@@ -96,21 +96,31 @@ public partial class FloatShelfWindow : Window
             _entries.Add(new ShelfEntry(file.Path));
         }
 
-        if (_entries.Count > 0) Reveal();
+        UpdateFooter();
+        Reveal();
     }
 
-    /// <summary>Brings the shelf up, placing it the first time it is ever shown.</summary>
+    /// <summary>
+    /// Brings the shelf up, where it was the last time it was up.
+    ///
+    /// The off-screen park is how the height is settled before anything is photographed,
+    /// and it is also how the shelf went missing: parking happened on every reveal while
+    /// placing happened only on the first, so the second time it was shown it sat at
+    /// -20000 and stayed there. Where it sits is remembered here rather than read back
+    /// from the window, because the window is moved with SetWindowPos behind WPF's back
+    /// and Hide/Show is free to put it wherever WPF last thought it was.
+    /// </summary>
     public void Reveal()
     {
         if (!IsVisible)
         {
-            // Off screen first, so the height settles before anything is photographed.
             Left = -20000;
             Top = -20000;
             Show();
         }
 
-        if (!_placed)
+        if (_placed) Restore();
+        else
         {
             PlaceBottomRight();
             _placed = true;
@@ -121,6 +131,20 @@ public partial class FloatShelfWindow : Window
     }
 
     private bool _placed;
+    private int _spotLeft;
+    private int _spotTop;
+
+    /// <summary>Back to the corner it was left in, at whatever size it is now.</summary>
+    private void Restore()
+    {
+        var scale = DpiAt(new POINT(_spotLeft, _spotTop)) / 96.0;
+        var size = Measure(scale);
+
+        SetWindowPos(
+            new WindowInteropHelper(this).Handle, HWND_TOPMOST,
+            _spotLeft, _spotTop, size.Width, size.Height,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
 
     /// <summary>
     /// Out of the way to begin with: bottom right of the monitor the pointer is on,
@@ -140,12 +164,15 @@ public partial class FloatShelfWindow : Window
 
         var scale = DpiAt(cursor) / 96.0;
         var size = Measure(scale);
+        var margin = (int)Math.Round(16 * scale);
+
+        _spotLeft = info.rcWork.Right - size.Width - margin;
+        _spotTop = info.rcWork.Bottom - size.Height - margin;
 
         SetWindowPos(
             new WindowInteropHelper(this).Handle, HWND_TOPMOST,
-            info.rcWork.Right - size.Width - (int)Math.Round(16 * scale),
-            info.rcWork.Bottom - size.Height - (int)Math.Round(16 * scale),
-            size.Width, size.Height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            _spotLeft, _spotTop, size.Width, size.Height,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 
     /// <summary>
@@ -182,6 +209,11 @@ public partial class FloatShelfWindow : Window
 
         if (!GetWindowRect(handle, out var rect)) return;
 
+        // Wherever it has ended up is where it lives from now on, including after a
+        // drag, so closing and reopening brings it back to the same corner.
+        _spotLeft = rect.Left;
+        _spotTop = rect.Top;
+
         var scale = DpiAt(new POINT(rect.Left, rect.Top)) / 96.0;
         var size = Measure(scale);
 
@@ -196,15 +228,26 @@ public partial class FloatShelfWindow : Window
             SWP_NOACTIVATE | SWP_SHOWWINDOW, "shelf");
     }
 
+    /// <summary>
+    /// The footer says what to do with what is there, and the shelf can be empty: the
+    /// tray menu opens it whether or not anything has been parked on it yet.
+    /// </summary>
+    private void UpdateFooter() =>
+        FooterText.Text = _entries.Count == 0
+            ? "Nothing parked yet"
+            : "Click to open, or drag it off";
+
     private ShelfEntry? EntryAt(MouseEventArgs e) =>
         (e.OriginalSource as FrameworkElement)?.DataContext as ShelfEntry;
 
     private void Remove(ShelfEntry entry)
     {
         _entries.Remove(entry);
+        UpdateFooter();
 
-        if (_entries.Count == 0) Hide();
-        else Reglaze();
+        // Emptied by hand rather than closed, so it stays up and says so. Closing is
+        // the cross, and the two should not be the same gesture.
+        Reglaze();
     }
 
     /// <summary>

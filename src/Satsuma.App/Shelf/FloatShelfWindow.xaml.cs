@@ -172,9 +172,13 @@ public partial class FloatShelfWindow : Window
 
         if (!_placed)
         {
+            // Top right to begin with. The bottom right is where the progress card
+            // lives, and the shelf outlives the job that filled it, so parking it there
+            // meant every later conversion reported itself from underneath the shelf.
+            // It also grows downwards as files are added, which it has room to do here.
             var margin = (int)Math.Round(16 * scale);
             _spotLeft = work.Right - size.Width - margin;
-            _spotTop = work.Bottom - size.Height - margin;
+            _spotTop = work.Top + margin;
             _placed = true;
         }
 

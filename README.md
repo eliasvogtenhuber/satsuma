@@ -95,7 +95,7 @@ wheel back up, so you can pick something else. **Esc** calls the whole thing off
 
 ### The shelf
 
-**Float** parks files on a small glass tray that stays on top, for the case where the
+**Float** parks files on a small glass tray in the top right that stays on top, for the case where the
 source and the destination are never on screen together: park them, go and find the
 folder, then drag them off. Click one to open it, drag it off to copy it somewhere,
 right-click to take it off the shelf. The cross closes the tray without emptying it, and

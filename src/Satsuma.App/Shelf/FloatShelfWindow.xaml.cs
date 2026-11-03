@@ -63,7 +63,7 @@ public partial class FloatShelfWindow : Window
 
             // Only when it actually went somewhere. A plain click on the strip should
             // not cost a capture, and a capture means hiding the window for a frame.
-            if (WhereItIs() != from) Reglaze();
+            if (WhereItIs() != from) SettleAfterDrag();
         };
 
         // The cross lives inside the strip you drag the shelf by, so its press bubbles
@@ -147,21 +147,38 @@ public partial class FloatShelfWindow : Window
     /// </summary>
     public void Reveal()
     {
-        if (!IsVisible)
-        {
-            Left = -20000;
-            Top = -20000;
-            Show();
-        }
+        var handle = EnsureWindow();
+        if (handle == IntPtr.Zero) return;
 
-        if (_placed) Restore();
-        else
+        // The monitor it is going to, decided before anything is measured: the one it
+        // was last left on, or the one the pointer is on the very first time.
+        var anchor = _placed
+            ? new POINT(_spotLeft, _spotTop)
+            : (GetCursorPos(out var cursor) ? cursor : new POINT(0, 0));
+
+        if (!WorkArea(anchor, out var work, out var scale)) return;
+
+        // Parked just below that monitor rather than in a far corner of the coordinate
+        // space. The far corner belongs to whichever monitor is nearest it, so on a
+        // mixed-DPI desktop the shelf was laid out at one scale and shown at another --
+        // and a window that crosses a DPI boundary has its Width rewritten by the
+        // ratio. That is why the first shelf came out a different size from every one
+        // after it: 258 units wide became 412 on the way across, and the next reveal
+        // bounced it most of the way back.
+        SetWindowPos(handle, HWND_TOPMOST, work.Left, work.Bottom + 8, 0, 0,
+            SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+        var size = Measure(scale);
+
+        if (!_placed)
         {
-            PlaceBottomRight();
+            var margin = (int)Math.Round(16 * scale);
+            _spotLeft = work.Right - size.Width - margin;
+            _spotTop = work.Bottom - size.Height - margin;
             _placed = true;
         }
 
-        Reglaze();
+        Reglaze(size);
         Activate();
     }
 
@@ -169,45 +186,31 @@ public partial class FloatShelfWindow : Window
     private int _spotLeft;
     private int _spotTop;
 
-    /// <summary>Back to the corner it was left in, at whatever size it is now.</summary>
-    private void Restore()
+    /// <summary>Realises the window off screen if it does not exist yet.</summary>
+    private IntPtr EnsureWindow()
     {
-        var scale = DpiAt(new POINT(_spotLeft, _spotTop)) / 96.0;
-        var size = Measure(scale);
+        if (!IsVisible)
+        {
+            Left = -20000;
+            Top = -20000;
+            Show();
+        }
 
-        SetWindowPos(
-            new WindowInteropHelper(this).Handle, HWND_TOPMOST,
-            _spotLeft, _spotTop, size.Width, size.Height,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        return new WindowInteropHelper(this).Handle;
     }
 
-    /// <summary>
-    /// Out of the way to begin with: bottom right of the monitor the pointer is on,
-    /// above the taskbar, which is where a parking spot belongs.
-    /// </summary>
-    private void PlaceBottomRight()
+    private static bool WorkArea(POINT at, out RECT work, out double scale)
     {
-        if (!GetCursorPos(out var cursor)) return;
-
-        var monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
         var info = new MONITORINFO
         {
             cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>()
         };
 
-        if (!GetMonitorInfo(monitor, ref info)) return;
+        var found = GetMonitorInfo(MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST), ref info);
 
-        var scale = DpiAt(cursor) / 96.0;
-        var size = Measure(scale);
-        var margin = (int)Math.Round(16 * scale);
-
-        _spotLeft = info.rcWork.Right - size.Width - margin;
-        _spotTop = info.rcWork.Bottom - size.Height - margin;
-
-        SetWindowPos(
-            new WindowInteropHelper(this).Handle, HWND_TOPMOST,
-            _spotLeft, _spotTop, size.Width, size.Height,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        work = info.rcWork;
+        scale = DpiAt(at) / 96.0;
+        return found;
     }
 
     /// <summary>
@@ -217,50 +220,75 @@ public partial class FloatShelfWindow : Window
     /// contributes its own natural size, so a window still sizing itself would grow to
     /// fit the photograph of itself.
     /// </summary>
+    /// <summary>The width the shelf is designed at, in device-independent units.</summary>
+    private const double DesignWidth = 258;
+
+    /// <summary>The padding the root grid holds the glass in by, top and bottom.</summary>
+    private const double Inset = 20;
+
     private (int Width, int Height) Measure(double scale)
     {
-        SizeToContent = SizeToContent.Height;
-        UpdateLayout();
-
-        Height = ActualHeight;
+        // Both dimensions asserted rather than read back. Crossing a DPI boundary
+        // rewrites a window's Width by the ratio between the two monitors and WPF keeps
+        // that number; and SizeToContent measures everything in the window, backdrop
+        // included -- an Image with a source wants to be the size of its bitmap, so the
+        // shelf grew to fit the photograph taken of it last time. Measuring the content
+        // on its own is the only number that means anything here.
+        Width = DesignWidth;
         SizeToContent = SizeToContent.Manual;
 
-        return ((int)Math.Round(ActualWidth * scale), (int)Math.Round(ActualHeight * scale));
+        Body.Measure(new Size(DesignWidth - Inset, double.PositiveInfinity));
+        Height = Math.Ceiling(Body.DesiredSize.Height + Inset);
+
+        UpdateLayout();
+
+        return ((int)Math.Round(DesignWidth * scale), (int)Math.Round(Height * scale));
     }
 
     /// <summary>
-    /// Takes the photograph behind the shelf again and puts it back where it was.
+    /// Takes the photograph behind the shelf again and puts it where it belongs.
     ///
     /// Hidden for the capture, because the capture is of the screen and the shelf is on
     /// it: left visible it photographs itself, and every retake blurs the last one a
     /// little further until the glass is mud.
     /// </summary>
-    private void Reglaze()
+    private void Reglaze(( int Width, int Height )? known = null)
     {
         if (!IsVisible) return;
 
         var handle = new WindowInteropHelper(this).Handle;
         if (handle == IntPtr.Zero) return;
 
-        if (!GetWindowRect(handle, out var rect)) return;
+        var scale = DpiAt(new POINT(_spotLeft, _spotTop)) / 96.0;
+        var size = known ?? Measure(scale);
 
-        // Wherever it has ended up is where it lives from now on, including after a
-        // drag, so closing and reopening brings it back to the same corner.
-        _spotLeft = rect.Left;
-        _spotTop = rect.Top;
-
-        var scale = DpiAt(new POINT(rect.Left, rect.Top)) / 96.0;
-        var size = Measure(scale);
+        Diagnostics.Log.Write(
+            $"shelf: at {_spotLeft},{_spotTop} size={size.Width}x{size.Height} " +
+            $"({DesignWidth:0}x{Height:0} at {scale:0.##}x), {_entries.Count} item(s)");
 
         ShowWindow(handle, SW_HIDE);
-        var capture = ScreenCapture.Capture(rect.Left, rect.Top, size.Width, size.Height);
+        var capture = ScreenCapture.Capture(_spotLeft, _spotTop, size.Width, size.Height);
 
         Backdrop.Source = capture;
         Scrim.Background = GlassTint.For(capture);
         UpdateLayout();
 
-        WindowPlacement.Apply(handle, rect.Left, rect.Top, size.Width, size.Height,
+        WindowPlacement.Apply(handle, _spotLeft, _spotTop, size.Width, size.Height,
             SWP_NOACTIVATE | SWP_SHOWWINDOW, "shelf");
+    }
+
+    /// <summary>
+    /// Records where a hand-drag left the shelf, so it comes back there, then retakes
+    /// the glass for its new surroundings.
+    /// </summary>
+    private void SettleAfterDrag()
+    {
+        var (x, y) = WhereItIs();
+
+        _spotLeft = x;
+        _spotTop = y;
+
+        Reglaze();
     }
 
     /// <summary>

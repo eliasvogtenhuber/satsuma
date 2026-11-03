@@ -8,7 +8,6 @@
         ShowInTaskbar="False"
         Topmost="True"
         ResizeMode="NoResize"
-        SizeToContent="Height"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
         FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -52,7 +51,7 @@
 
         <Border CornerRadius="14" BorderBrush="#4DFFFFFF" BorderThickness="1" />
 
-        <StackPanel Margin="0,9,0,11">
+        <StackPanel x:Name="Body" Margin="0,9,0,11">
             <StackPanel.Effect>
                 <DropShadowEffect BlurRadius="5" ShadowDepth="0" Opacity="0.85" Color="Black" />
             </StackPanel.Effect>

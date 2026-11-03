@@ -118,6 +118,7 @@ public partial class App : Application
             _wheel?.Prewarm();
             TryProbeSelection(e.Args);
             TryShowPreview(e.Args);
+            TryShelf(e.Args);
         }, DispatcherPriority.Normal);
 
         _closeAfterDrag = new DispatcherTimer
@@ -204,6 +205,37 @@ public partial class App : Application
 
         Log.Write($"probe result: {found.Count} file(s)");
         foreach (var file in found) Log.Write($"  {file.Path}");
+    }
+
+    /// <summary>
+    /// <c>--shelf &lt;path&gt;</c> parks a file on the shelf, closes it and opens it again.
+    ///
+    /// It exists because the shelf cannot be driven from a test and the thing that kept
+    /// going wrong with it was the difference between the first time it is shown and
+    /// every time after. Two reveals in a row put both in the log side by side.
+    /// </summary>
+    private async void TryShelf(IReadOnlyList<string> args)
+    {
+        var flag = args.ToList().FindIndex(a =>
+            a.Equals("--shelf", StringComparison.OrdinalIgnoreCase));
+
+        if (flag < 0 || args.Count <= flag + 1) return;
+
+        var path = args[flag + 1];
+        if (!File.Exists(path) && !Directory.Exists(path)) return;
+
+        Log.Write("--shelf: first reveal");
+        ShowShelf(new[] { new SourceFile(path) });
+
+        await Task.Delay(1200);
+
+        Log.Write("--shelf: closing");
+        _shelf?.Hide();
+
+        await Task.Delay(400);
+
+        Log.Write("--shelf: second reveal");
+        _shelf?.Reveal();
     }
 
     private void TryShowPreview(IReadOnlyList<string> args)

@@ -21,9 +21,14 @@ internal static class Program
 
     private static readonly JobRunner Runner = new();
 
-    private static async Task<int> Main()
+    private static async Task<int> Main(string[] args)
     {
         Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+
+        if (args.Length >= 3 && args[0].Equals("--try", StringComparison.OrdinalIgnoreCase))
+        {
+            return await TryOne(args[1], args.Skip(2).ToArray());
+        }
 
         var workspace = Path.Combine(Path.GetTempPath(), "Satsuma.SelfTest",
             DateTime.Now.ToString("yyyyMMdd-HHmmss"));
@@ -1502,6 +1507,67 @@ internal static class Program
     };
 
     private static string Kb(long bytes) => $"{bytes / 1024.0:0.#} KB";
+
+    /// <summary>
+    /// <c>--try &lt;slice id&gt; &lt;file&gt; [more files]</c> runs one slice against real
+    /// files and says what happened.
+    ///
+    /// The wheel cannot be clicked from a test, so when something "does not work" the
+    /// only way to tell a broken handler from a file that genuinely cannot be converted
+    /// used to be to guess. This runs exactly what the wheel would run, on the file the
+    /// user actually tried, and prints the sizes.
+    /// </summary>
+    private static async Task<int> TryOne(string id, string[] paths)
+    {
+        var files = paths.Select(path => new SourceFile(Path.GetFullPath(path))).ToList();
+
+        var missing = files.Where(file => !File.Exists(file.Path) && !Directory.Exists(file.Path)).ToList();
+        if (missing.Count > 0)
+        {
+            Console.WriteLine($"No such file: {missing[0].Path}");
+            return 2;
+        }
+
+        var category = FileTypeResolver.ResolveSelection(files);
+
+        var item = Enum.GetValues<WheelKind>()
+            .SelectMany(kind => kind switch
+            {
+                WheelKind.Formats => FormatCatalog.For(category, files),
+                WheelKind.Tools => ToolCatalog.For(category),
+                _ => ActionCatalog.For(category)
+            })
+            .SelectMany(entry => entry.Children.Prepend(entry))
+            .FirstOrDefault(entry => entry.Id == id);
+
+        if (item is null)
+        {
+            Console.WriteLine($"No slice '{id}' for a {category}.");
+            return 2;
+        }
+
+        Console.WriteLine($"{item.Label}  ({id})  on {files.Count} {category} file(s)");
+        foreach (var file in files) Console.WriteLine($"  in   {file.Name}  {Kb(new FileInfo(file.Path).Length)}");
+
+        if (!Runner.CanHandle(new JobRequest(item, files, category)))
+        {
+            Console.WriteLine("  no handler claims it");
+            return 1;
+        }
+
+        var result = await Run(item, files, category);
+
+        foreach (var output in result.Outputs)
+        {
+            Console.WriteLine(Directory.Exists(output)
+                ? $"  out  {Path.GetFileName(output)}/"
+                : $"  out  {Path.GetFileName(output)}  {Kb(new FileInfo(output).Length)}");
+        }
+
+        foreach (var failure in result.Failures) Console.WriteLine($"  fail {failure}");
+
+        return result.AllSucceeded ? 0 : 1;
+    }
 
     /// <summary>
     /// Where results end up once a held key has asked for somewhere other than "beside".

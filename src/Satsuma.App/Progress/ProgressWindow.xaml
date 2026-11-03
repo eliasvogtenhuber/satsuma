@@ -82,18 +82,22 @@
                        Cursor="Hand" Margin="8,2,0,0"
                        ToolTip="Cancel" />
 
+            <!-- Wraps to two lines rather than trimming at one. A filename and a reason
+                 do not fit on one line, and a reason cut off at "this PDF is text
+                 rathe..." is worse than no reason: the useful half is always the end. -->
             <TextBlock x:Name="DetailText"
                        Grid.Row="1" Grid.ColumnSpan="2"
                        Text=""
                        FontSize="11" Foreground="#B8B8B8"
                        Margin="0,3,0,0"
+                       TextWrapping="Wrap" MaxHeight="30"
                        TextTrimming="CharacterEllipsis" />
 
             <!-- Drawn rather than a ProgressBar: the stock control brings its own chrome,
                  which is the part that looked out of place next to the wheel. -->
             <Grid x:Name="BarTrack" Grid.Row="2" Grid.ColumnSpan="2" Height="3" Margin="0,11,0,0"
                   HorizontalAlignment="Stretch">
-                <Border x:Name="BarBase" CornerRadius="1.5" Background="#2EFFFFFF" />
+                <Border CornerRadius="1.5" Background="#2EFFFFFF" />
                 <Border x:Name="BarFill" CornerRadius="1.5" HorizontalAlignment="Left" Width="0">
                     <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">

@@ -26,16 +26,20 @@ public partial class ProgressWindow : Window
     private IReadOnlyList<string> _results = Array.Empty<string>();
     private double _fraction;
 
-    private static readonly Brush ProgressNormal = Freeze(new SolidColorBrush(Colors.White));
-    private static readonly Brush ProgressCancelled = Freeze(new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)));
-
     /// <summary>
-    /// The one colour in Satsuma that means "no". It is the same red the prompt outlines
-    /// a value it will not accept with, which is the point: there is white for what
-    /// worked, grey for what was stopped, and this. An amber fourth hue for "partly" had
-    /// no home anywhere else in the app and read as decoration.
+    /// The bar has no colours, only a length.
+    ///
+    /// It filled amber for a partial run and red for a failed one, and both read as
+    /// decoration: nothing else in Satsuma is coloured, so a coloured bar is the only
+    /// hue on screen and draws the eye to the least informative part of the card. The
+    /// length already says everything -- full for done, part-way for partly done,
+    /// nothing for a run that produced nothing -- and the line above it says the rest
+    /// in words.
     /// </summary>
-    private static readonly Brush ProgressFailed = Freeze(new SolidColorBrush(Color.FromRgb(0xE2, 0x6D, 0x5A)));
+    private static readonly Brush ProgressNormal = Freeze(new SolidColorBrush(Colors.White));
+
+    private static readonly Brush ProgressCancelled =
+        Freeze(new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)));
 
     public ProgressWindow()
     {
@@ -113,13 +117,9 @@ public partial class ProgressWindow : Window
         {
             TitleText.Text = $"{result.Outputs.Count} done, {result.Failures.Count} failed";
             DetailText.Text = result.Failures[0];
-
-            // Both at once, in the two colours that already mean something: the bar
-            // fills white as far as the work got and the rest of the track is the red
-            // for no. It says which proportion failed, which one flat colour could not.
-            BarBase.Background = ProgressFailed;
             BarFill.Background = ProgressNormal;
 
+            // The bar stops where the work did, against the faint track it always has.
             var total = result.Outputs.Count + result.Failures.Count;
             _fraction = total > 0 ? result.Outputs.Count / (double)total : 1;
             ApplyFraction();
@@ -128,7 +128,12 @@ public partial class ProgressWindow : Window
         {
             TitleText.Text = "Did not work";
             DetailText.Text = result.Failures.Count > 0 ? result.Failures[0] : "No output.";
-            BarFill.Background = ProgressFailed;
+
+            // Nothing was produced, so the bar shows nothing. An empty track under
+            // "Did not work" needs no colour to be understood.
+            BarFill.Background = ProgressNormal;
+            _fraction = 0;
+            ApplyFraction();
         }
 
         // A failure stays up long enough to actually read.

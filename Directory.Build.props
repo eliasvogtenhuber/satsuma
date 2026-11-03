@@ -7,6 +7,12 @@
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <!-- Satsuma has no translated strings of its own, so the fourteen satellite folders
+         a publish drops next to the exe only ever hold framework resources nothing in
+         it reads. They are not large; they are just clutter in the folder a user
+         unzips, and the folder is the whole installer. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <SatsumaVersion>0.1.0</SatsumaVersion>
     <Version>$(SatsumaVersion)</Version>
     <Company>Satsuma</Company>

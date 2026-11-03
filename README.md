@@ -168,7 +168,7 @@ supported: nothing shippable can write it. Compressing a HEIC gives you a JPG.
 ## Installing
 
 Satsuma needs **Windows 10 1809 or later**, x64. Download the latest zip from
-[Releases](https://github.com/YOUR-NAME/satsuma/releases), unzip it anywhere, and run
+[Releases](https://github.com/eliasvogtenhuber/satsuma/releases), unzip it anywhere, and run
 `Satsuma.exe`.
 
 That is the whole install. The .NET runtime is in the folder, because Windows does not
@@ -187,7 +187,7 @@ hash against the release if you would rather not take that on faith.
 With the .NET 8 SDK:
 
 ```bash
-git clone https://github.com/YOUR-NAME/satsuma.git
+git clone https://github.com/eliasvogtenhuber/satsuma.git
 ```
 
 ```bash
@@ -237,7 +237,26 @@ most "convert my document" websites run server-side — the difference here bein
 file never leaves the machine.
 
 Satsuma runs it headless under its own profile, so it does not disturb a LibreOffice you
-already have open, and finds it in the usual install locations or on `PATH`.
+already have open, and finds it in the usual install locations or on `PATH`. The tray
+menu says whether it found one.
+
+**If you would rather keep everything in one folder**, put a copy at `tools\LibreOffice`
+next to `Satsuma.exe` — the same place ffmpeg lives — and it is found there first, with
+nothing installed and nothing to configure:
+
+```
+Satsuma\
+  Satsuma.exe
+  tools\
+    ffmpeg.exe
+    LibreOffice\program\soffice.exe
+```
+
+That is the whole of the bundling question. Satsuma could ship one and the download would
+go from about 135MB to the better part of a gigabyte, for a corner of the app most people
+never open; it could ship none and documents would quietly not work. Shipping the small
+dependency, finding the large one, and leaving the door open for anyone who wants it in
+the folder is the honest middle.
 
 ## Settings
 
@@ -362,3 +381,7 @@ Mac, buy theirs.
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
+
+Satsuma bundles the .NET runtime and ffmpeg, and builds on PdfPig and Docnet. What is in
+the release zip and under what terms is in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

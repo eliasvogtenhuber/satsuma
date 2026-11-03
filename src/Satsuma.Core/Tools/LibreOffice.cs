@@ -96,6 +96,18 @@ public static class LibreOffice
 
     private static IEnumerable<string> Candidates()
     {
+        // Beside the exe first, the same way ffmpeg is found, so a copy dropped into
+        // tools\LibreOffice makes a folder that needs nothing installed at all. Satsuma
+        // does not ship one -- it is several hundred megabytes for a feature most people
+        // never reach, and it releases on its own schedule -- but anyone who wants a
+        // self-contained Satsuma can put one there and it is found without settings.
+        yield return System.IO.Path.Combine(
+            AppContext.BaseDirectory, "tools", "LibreOffice", "program", "soffice.exe");
+
+        yield return System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Satsuma", "tools", "LibreOffice", "program", "soffice.exe");
+
         var roots = new[]
         {
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),

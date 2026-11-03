@@ -64,6 +64,22 @@ public sealed class TrayController : IDisposable
             menu.Items.Add(help);
         }
 
+        // The other optional half. Satsuma does not ship LibreOffice: it is several
+        // hundred megabytes, far more than everything else here put together, for the
+        // one corner of the app most people never reach. Saying plainly whether it is
+        // there, and offering to fetch it, is the honest middle.
+        var office = new ToolStripMenuItem(Core.Tools.LibreOffice.IsAvailable
+            ? "LibreOffice: ready"
+            : "LibreOffice: not found") { Enabled = false };
+        menu.Items.Add(office);
+
+        if (!Core.Tools.LibreOffice.IsAvailable)
+        {
+            var help = new ToolStripMenuItem("How to install LibreOffice");
+            help.Click += (_, _) => ShowLibreOfficeHelp();
+            menu.Items.Add(help);
+        }
+
         menu.Items.Add(new ToolStripSeparator());
 
         var shelf = new ToolStripMenuItem("Show shelf");
@@ -114,6 +130,22 @@ public sealed class TrayController : IDisposable
             "location. Restart Satsuma afterwards.";
 
         MessageBox.Show(message, "Satsuma needs ffmpeg for this",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void ShowLibreOfficeHelp()
+    {
+        const string message =
+            "Satsuma uses LibreOffice for documents, spreadsheets and slides: docx, " +
+            "xlsx, pptx, odt and the rest. Everything else works without it.\n\n" +
+            "Install it with:\n\n    winget install TheDocumentFoundation.LibreOffice\n\n" +
+            "It is not bundled because it is several hundred megabytes, more than the " +
+            "rest of Satsuma put together, and it updates on its own schedule.\n\n" +
+            "If you would rather keep everything in one folder, put a copy at " +
+            "tools\\LibreOffice next to Satsuma.exe and it will be found there. " +
+            "Restart Satsuma afterwards either way.";
+
+        MessageBox.Show(message, "Satsuma needs LibreOffice for this",
             MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 

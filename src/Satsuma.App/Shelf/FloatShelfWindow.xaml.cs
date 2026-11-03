@@ -47,11 +47,32 @@ public partial class FloatShelfWindow : Window
         {
             if (e.ButtonState != MouseButtonState.Pressed) return;
 
-            // Blocks until the move is over, so the glass can be retaken afterwards
-            // rather than smearing the place it came from across the new one.
-            DragMove();
-            Reglaze();
+            var from = WhereItIs();
+
+            try
+            {
+                // Blocks until the move is over, so the glass can be retaken afterwards
+                // rather than smearing the place it came from across the new one.
+                DragMove();
+            }
+            catch (InvalidOperationException)
+            {
+                // The button was already up by the time this ran.
+                return;
+            }
+
+            // Only when it actually went somewhere. A plain click on the strip should
+            // not cost a capture, and a capture means hiding the window for a frame.
+            if (WhereItIs() != from) Reglaze();
         };
+
+        // The cross lives inside the strip you drag the shelf by, so its press bubbles
+        // up to the strip and starts DragMove -- which blocks until the button comes up
+        // and swallows the release, so the click never became a close. Stopping the
+        // press here is what keeps the two apart. It is also why the cross seemed
+        // unclickable before it was a proper target: the press that missed its strokes
+        // went to the strip and dragged the window a pixel instead.
+        CloseButton.MouseLeftButtonDown += (_, e) => e.Handled = true;
 
         CloseButton.MouseLeftButtonUp += (_, e) =>
         {
@@ -80,6 +101,20 @@ public partial class FloatShelfWindow : Window
             e.Handled = true;
             Remove(entry);
         };
+    }
+
+    /// <summary>
+    /// The window's own corner, in real pixels. Asked of Windows rather than of WPF,
+    /// because the shelf is placed with SetWindowPos and WPF's Left and Top do not
+    /// always know about it.
+    /// </summary>
+    private (int X, int Y) WhereItIs()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+
+        return handle != IntPtr.Zero && GetWindowRect(handle, out var rect)
+            ? (rect.Left, rect.Top)
+            : (0, 0);
     }
 
     private static System.Windows.Media.Brush Tint(byte alpha) =>

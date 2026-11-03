@@ -531,22 +531,34 @@ public partial class App : Application
         EventHandler<DragModifierEvent>? onClicked = null;
         DispatcherTimer? giveUp = null;
 
+        // The order files were added in, which Explorer does not report: its selection
+        // comes back in the order the view is sorted. Merging is one of the few jobs
+        // where order is the whole point, so it is kept here -- anything that leaves the
+        // selection drops out, anything new goes on the end. Pick three with Ctrl and
+        // they merge in that order; plain-click a fourth and it replaces all three,
+        // because that is what a plain click did to the selection.
+        var order = new List<string>();
+        var subjects = new HashSet<string>(
+            starting.Select(file => file.Path), StringComparer.OrdinalIgnoreCase);
+
         IReadOnlyList<SourceFile> WithSelected(IReadOnlyList<SourceFile> selected)
         {
-            var files = new List<SourceFile>(starting);
-            var seen = new HashSet<string>(
-                files.Select(file => file.Path), StringComparer.OrdinalIgnoreCase);
+            var now = selected
+                .Where(file => !file.IsDirectory
+                               && !subjects.Contains(file.Path)
+                               && string.Equals(file.Extension, wanted,
+                                   StringComparison.OrdinalIgnoreCase))
+                .Select(file => file.Path)
+                .ToList();
 
-            foreach (var file in selected)
+            order.RemoveAll(path => !now.Contains(path, StringComparer.OrdinalIgnoreCase));
+
+            foreach (var path in now)
             {
-                if (file.IsDirectory) continue;
-                if (!string.Equals(file.Extension, wanted, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!seen.Add(file.Path)) continue;
-
-                files.Add(file);
+                if (!order.Contains(path, StringComparer.OrdinalIgnoreCase)) order.Add(path);
             }
 
-            return files;
+            return starting.Concat(order.Select(path => new SourceFile(path))).ToList();
         }
 
         void Stop()

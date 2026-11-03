@@ -34,6 +34,7 @@ There are two ways in.
 | **1** | Convert to | Output formats for whatever you are dragging |
 | **2** | Tools | Compress, resize, rotate, trim, normalise, and so on |
 | **3** | Actions | Reveal, Float, Copy, Move, Copy path, Terminal |
+| **4** | — | Backs out of a question Satsuma is asking and puts the wheel back |
 
 Then:
 
@@ -66,9 +67,10 @@ Beside the original, unless you say otherwise. Saying otherwise means holding a 
 so a tap on the way past does nothing. A small mark appears on the hub while you hold it,
 so you can see which one you are in before you drop.
 
-- **Space** — somewhere else. Let go once you have dropped and Satsuma makes a folder,
-  named for what it did. Keep holding and click a folder instead, and they go there.
-  Clicking something that is not a folder is a miss, not an answer, so try again.
+- **Space** — somewhere else. After the drop, keep holding it and select a folder in
+  Explorer; let go, and the results go into whatever folder is selected. Let go having
+  selected none and Satsuma makes one, named for what it did. A label at the pointer
+  says which it will be.
 - **Alt** — over the original. The original goes to the Recycle Bin and the result takes
   its name. Where a delete would not reach the bin, like a network share, the original is
   kept and Satsuma says so instead of destroying it quietly.
@@ -81,10 +83,15 @@ The original still goes, and the pieces stay where they were written.
 Merge is on the Tools wheel for a single PDF, because one PDF is where you start: you are
 looking at the first one, not at a selection.
 
-Pick it and the wheel goes away, leaving a count beside the pointer. Click the other PDFs
-in Explorer — one at a time, or several at once — and press **Enter** when you have them
-all. They are merged in the order you clicked them, with the one you started from first.
-**Esc** calls it off.
+Pick it and the wheel goes away, leaving a label at the pointer. Select the other PDFs in
+Explorer the way you always would — a click takes one, **Ctrl** and **Shift** take
+several — and the gesture ends when you let go of the wheel key you were already holding.
+Whatever is selected at that moment is what gets merged, with the one you started from
+first. If you opened the wheel by clicking rather than dragging there is no key to let go
+of, so the label grows a tick to click, and **Enter** works too.
+
+**4** backs out of any of this — the folder question, the file selection — and puts the
+wheel back up, so you can pick something else. **Esc** calls the whole thing off.
 
 ### Why number keys and not Shift, Ctrl and Alt
 
@@ -229,6 +236,7 @@ already have open, and finds it in the usual install locations or on `PATH`.
   "FormatsKey": "1",
   "ToolsKey": "2",
   "ActionsKey": "3",
+  "BackKey": "4",
   "SelectionStyle": "Depth",
   "GlassOpacity": 1.0,
   "GlassBlur": 24,

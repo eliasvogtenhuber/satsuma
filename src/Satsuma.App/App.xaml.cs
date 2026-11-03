@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Satsuma.App.Actions;
 using Satsuma.App.Diagnostics;
+using Satsuma.App.Glass;
 using Satsuma.App.Hint;
 using Satsuma.App.Interop;
 using Satsuma.App.Progress;
@@ -31,7 +32,15 @@ public partial class App : Application
     private DragWatcher? _watcher;
     private WheelWindow? _wheel;
     private FloatShelfWindow? _shelf;
-    private ModeHintWindow? _hint;
+    private CursorHintWindow? _hint;
+
+    /// <summary>
+    /// The Explorer window the current gesture came from.
+    ///
+    /// Kept because the wheel is topmost: once anything of Satsuma's is on screen,
+    /// asking what lies under a screen point answers "Satsuma".
+    /// </summary>
+    private IntPtr _lastSourceWindow;
 
     /// <summary>Set while a drop is being turned into a job, so the wheel is not reopened.</summary>
     private DispatcherTimer? _closeAfterDrag;
@@ -250,6 +259,8 @@ public partial class App : Application
         // cross-process COM into explorer.exe and far too slow to hold the wheel back.
         var upFront = _shellWarm ? ReadSelection(e.SourceWindow) : Array.Empty<SourceFile>();
 
+        _lastSourceWindow = e.SourceWindow;
+
         _watcher.WheelOpen = true;
         _wheel.ShowFor(e.Wheel, upFront, e.ScreenX, e.ScreenY);
 
@@ -271,6 +282,7 @@ public partial class App : Application
 
         _closeAfterDrag?.Stop();
         _watcher.WheelOpen = true;
+        _lastSourceWindow = e.SourceWindow;
 
         // There is no drag data here, so the Explorer selection is the only way to learn
         // which file this is about. Read from the window the event carried, not from a
@@ -365,13 +377,31 @@ public partial class App : Application
         return _watcher.SpaceHeld ? Destination.NewFolder : Destination.Beside;
     }
 
+    /// <summary>What ended a wait, and so what happens next.</summary>
+    private enum WaitEnd
+    {
+        /// <summary>Answered.</summary>
+        Done,
+
+        /// <summary>Escape, or nothing was chosen. Nothing happens.</summary>
+        Cancelled,
+
+        /// <summary>The back key: undo the choice and put the wheel up again.</summary>
+        Back
+    }
+
     private async void OnWheelChoice(object? sender, WheelChoice choice)
     {
         // Sampled first, before anything can await and let the keys come up.
         var destination = AskedForDestination();
+        var holding = _watcher?.WheelKeyHeld == true;
         var where = NativeMethods.GetCursorPos(out var cursor)
             ? cursor
             : new NativeMethods.POINT(0, 0);
+
+        // Kept for the back key, which has to put the wheel back the way it was.
+        var startedWith = choice.Files;
+        var source = _lastSourceWindow;
 
         SetWheelClosed();
         _closeAfterDrag?.Stop();
@@ -383,12 +413,19 @@ public partial class App : Application
         }
 
         // A slice that works on several files but was given one asks for the rest by
-        // letting them be clicked. Before the typed value, because which files there
+        // letting them be selected. Before the typed value, because which files there
         // are can change what a typed value would mean.
         if (choice.Item.Gathers && choice.Files.Count < 2)
         {
-            var gathered = await GatherMoreAsync(choice.Files, where.X, where.Y);
-            if (gathered is null) return;   // changed their mind
+            var (end, gathered) = await GatherMoreAsync(choice.Files, holding, source);
+
+            if (end == WaitEnd.Back)
+            {
+                ReopenWheel(choice.Item.Kind, startedWith, where);
+                return;
+            }
+
+            if (end != WaitEnd.Done) return;
 
             choice = choice with { Files = gathered };
         }
@@ -410,14 +447,21 @@ public partial class App : Application
 
         string? folder = null;
 
-        // Space asked for somewhere else. Which somewhere else is still open: keep
-        // holding and click one, or let go and have one made.
+        // Space asked for somewhere else. Which somewhere else is still open: select a
+        // folder before letting go, or let go having selected none and have one made.
         if (destination == Destination.NewFolder)
         {
-            var picked = await WaitForFolderAsync(where.X, where.Y);
-            if (picked is null) return;   // changed their mind
+            var (end, picked) = await WaitForFolderAsync(startedWith, source);
 
-            if (picked.Length > 0)
+            if (end == WaitEnd.Back)
+            {
+                ReopenWheel(choice.Item.Kind, startedWith, where);
+                return;
+            }
+
+            if (end != WaitEnd.Done) return;
+
+            if (picked is not null)
             {
                 destination = Destination.ChosenFolder;
                 folder = picked;
@@ -430,191 +474,306 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Collects the other files, by letting the user click them where they are.
+    /// Puts the wheel back up after the back key, holding what it held before.
     ///
-    /// Returns the whole list with the file the wheel was opened on still at the front,
-    /// or null if it was called off. Clicks are not swallowed: Explorer selecting what
-    /// was clicked is how Satsuma learns what it was, and it is also the only feedback
-    /// that a file has been taken.
+    /// Shown the click-driven way rather than the drag way, because by this point the
+    /// drag is long over: the drop is what got us here. So it stays up and is clicked.
     /// </summary>
-    private Task<IReadOnlyList<SourceFile>?> GatherMoreAsync(
-        IReadOnlyList<SourceFile> starting, int screenX, int screenY)
+    private void ReopenWheel(
+        WheelKind kind, IReadOnlyList<SourceFile> files, NativeMethods.POINT at)
     {
-        if (_watcher is null) return Task.FromResult<IReadOnlyList<SourceFile>?>(null);
+        if (_wheel is null || _watcher is null) return;
 
+        Log.Write($"back to the {kind} wheel with {files.Count} file(s)");
+
+        _watcher.WheelOpen = true;
+        _wheel.ShowForClick(kind, files, at.X, at.Y);
+    }
+
+    /// <summary>
+    /// Collects the other files by letting them be selected where they already are.
+    ///
+    /// Explorer does the selecting. A click picks one, Ctrl and Shift behave the way
+    /// they do everywhere else, and whatever is selected when the gesture ends is the
+    /// answer. Satsuma used to keep its own tally of clicked files, which meant a plain
+    /// click added instead of replacing and the selection on screen stopped agreeing
+    /// with the one being used -- the worst kind of disagreement, because the screen is
+    /// the only one of the two you can see.
+    ///
+    /// What ends it depends on how it began. With the wheel key still down there is
+    /// nothing to press: letting go ends this gesture the way letting go of the mouse
+    /// ended the one before it. With no key down -- a wheel opened by clicking -- there
+    /// is no such moment, so the label grows a tick and Enter works too.
+    /// </summary>
+    private Task<(WaitEnd End, IReadOnlyList<SourceFile> Files)> GatherMoreAsync(
+        IReadOnlyList<SourceFile> starting, bool keyHeld, IntPtr source)
+    {
         var watcher = _watcher;
-        var answered = new TaskCompletionSource<IReadOnlyList<SourceFile>?>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var files = starting.ToList();
-        var seen = new HashSet<string>(
-            files.Select(file => file.Path), StringComparer.OrdinalIgnoreCase);
+        if (watcher is null)
+        {
+            return Task.FromResult((WaitEnd.Cancelled, starting));
+        }
+
+        var answered = new TaskCompletionSource<(WaitEnd, IReadOnlyList<SourceFile>)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
 
         // Only more of the same kind. Merging a PDF with a spreadsheet is not a thing,
         // and a stray click on the wrong file should cost nothing.
-        var wanted = files.Count > 0 ? files[0].Extension : string.Empty;
+        var wanted = starting.Count > 0 ? starting[0].Extension : string.Empty;
+        var window = source;
 
-        EventHandler<DragModifierEvent>? onClicked = null;
+        EventHandler? onReleased = null;
         EventHandler? onConfirmed = null;
+        EventHandler? onBack = null;
         EventHandler? onCancelled = null;
+        EventHandler? onAccepted = null;
+        EventHandler<DragModifierEvent>? onClicked = null;
+        DispatcherTimer? giveUp = null;
 
-        void Finish(IReadOnlyList<SourceFile>? answer)
+        IReadOnlyList<SourceFile> WithSelected(IReadOnlyList<SourceFile> selected)
         {
-            watcher.Waiting = false;
-            watcher.ClickedWhileWaiting -= onClicked;
-            watcher.ConfirmRequested -= onConfirmed;
-            watcher.Cancelled -= onCancelled;
+            var files = new List<SourceFile>(starting);
+            var seen = new HashSet<string>(
+                files.Select(file => file.Path), StringComparer.OrdinalIgnoreCase);
 
-            _hint?.Dismiss();
-            answered.TrySetResult(answer);
+            foreach (var file in selected)
+            {
+                if (file.IsDirectory) continue;
+                if (!string.Equals(file.Extension, wanted, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!seen.Add(file.Path)) continue;
+
+                files.Add(file);
+            }
+
+            return files;
         }
 
-        onClicked = (_, click) =>
+        void Stop()
         {
-            var window = click.SourceWindow;
+            watcher.Waiting = false;
+            watcher.WheelKeyReleased -= onReleased;
+            watcher.ConfirmRequested -= onConfirmed;
+            watcher.BackRequested -= onBack;
+            watcher.Cancelled -= onCancelled;
+            watcher.ClickedWhileWaiting -= onClicked;
+
+            giveUp?.Stop();
+
+            if (_hint is not null) _hint.Accepted -= onAccepted;
+            _hint?.Dismiss();
+        }
+
+        void Leave(WaitEnd end)
+        {
+            Stop();
+            answered.TrySetResult((end, starting));
+        }
+
+        void Take()
+        {
+            // Unwired before the read, so a second trigger arriving during it cannot
+            // start another one.
+            Stop();
 
             Task.Run(async () =>
             {
-                // Long enough for Explorer to turn the click into a selection.
+                // Long enough for a last click to have become a selection.
                 await Task.Delay(140).ConfigureAwait(false);
 
-                var hit = await Core.Tools.StaExecutor
+                var selected = await Core.Tools.StaExecutor
                     .RunAsync(() => ShellSelection.FromWindow(window))
                     .ConfigureAwait(false);
 
                 await Dispatcher.BeginInvoke(() =>
                 {
-                    if (watcher.Waiting == false) return;
+                    var files = WithSelected(selected);
 
-                    foreach (var file in hit)
-                    {
-                        if (file.IsDirectory) continue;
-                        if (!string.Equals(file.Extension, wanted, StringComparison.OrdinalIgnoreCase)) continue;
-                        if (!seen.Add(file.Path)) continue;
+                    Log.Write($"gathered {files.Count} file(s) for {wanted}");
 
-                        files.Add(file);
-                        Log.Write($"gathered {file.Name} ({files.Count})");
-                    }
+                    // Let go having selected nothing: they changed their mind, and one
+                    // file is not something that can be merged anyway.
+                    answered.TrySetResult(files.Count > starting.Count
+                        ? (WaitEnd.Done, files)
+                        : (WaitEnd.Cancelled, starting));
+                });
+            });
+        }
 
-                    _hint?.ShowTally(files.Count - starting.Count, screenX, screenY);
+        onReleased = (_, _) => Take();
+        onConfirmed = (_, _) => Take();
+        onAccepted = (_, _) => Take();
+        onBack = (_, _) => Leave(WaitEnd.Back);
+        onCancelled = (_, _) => Leave(WaitEnd.Cancelled);
+
+        // Only to keep the label honest; the selection that counts is read at the end.
+        onClicked = (_, click) =>
+        {
+            if (click.SourceWindow != IntPtr.Zero) window = click.SourceWindow;
+            var reading = window;
+
+            Task.Run(async () =>
+            {
+                await Task.Delay(140).ConfigureAwait(false);
+
+                var selected = await Core.Tools.StaExecutor
+                    .RunAsync(() => ShellSelection.FromWindow(reading))
+                    .ConfigureAwait(false);
+
+                await Dispatcher.BeginInvoke(() =>
+                {
+                    if (!watcher.Waiting) return;
+
+                    var count = WithSelected(selected).Count;
+                    _hint?.Say(count > starting.Count ? $"{count} files" : "Select files");
                 });
             });
         };
 
-        onConfirmed = (_, _) =>
-            Finish(files.Count > starting.Count ? files : null);
-
-        onCancelled = (_, _) => Finish(null);
-
         watcher.Waiting = true;
-        watcher.ClickedWhileWaiting += onClicked;
+        watcher.WheelKeyReleased += onReleased;
         watcher.ConfirmRequested += onConfirmed;
+        watcher.BackRequested += onBack;
         watcher.Cancelled += onCancelled;
+        watcher.ClickedWhileWaiting += onClicked;
 
-        _hint ??= new ModeHintWindow();
-        _hint.ShowTally(0, screenX, screenY);
+        // Escape and the back key are both available here, so this is not the only way
+        // out. It is for the key-up that never arrives, which would otherwise leave
+        // every later click in Explorer answering a question nobody is still asking.
+        giveUp = new DispatcherTimer { Interval = TimeSpan.FromSeconds(120) };
+        giveUp.Tick += (_, _) => Leave(WaitEnd.Cancelled);
+        giveUp.Start();
+
+        _hint ??= new CursorHintWindow();
+        _hint.Accepted += onAccepted;
+
+        if (keyHeld) _hint.Follow("Select files", ModeGlyphs.Page);
+        else _hint.Anchor("Select files", ModeGlyphs.Page);
 
         return answered.Task;
     }
 
     /// <summary>
-    /// Waits for the answer to "which folder", which is either one that gets clicked or
-    /// none at all.
+    /// Waits for the answer to "which folder", which is whichever one is selected when
+    /// Space comes up, or none.
     ///
-    /// Returns the folder's path, an empty string for "make me one", or null if it was
-    /// called off. Space is already down when this starts -- that is what got us here --
-    /// so there is nothing to press, only something to let go of.
+    /// Returns the folder's path, or null for "make me one". Space is already down when
+    /// this starts -- that is what got us here -- so there is nothing to press, only
+    /// something to let go of, and what is selected at that moment is the answer.
     /// </summary>
-    private Task<string?> WaitForFolderAsync(int screenX, int screenY)
+    private Task<(WaitEnd End, string? Folder)> WaitForFolderAsync(
+        IReadOnlyList<SourceFile> starting, IntPtr source)
     {
-        if (_watcher is null || !_watcher.SpaceHeld)
+        var watcher = _watcher;
+
+        if (watcher is null || !watcher.SpaceHeld)
         {
-            // Let go between the drop and here. That is the answer.
-            return Task.FromResult<string?>(string.Empty);
+            // Let go between the drop and here. That is the answer: make one.
+            return Task.FromResult<(WaitEnd, string?)>((WaitEnd.Done, null));
         }
 
-        var watcher = _watcher;
-        var answered = new TaskCompletionSource<string?>(
+        var answered = new TaskCompletionSource<(WaitEnd, string?)>(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
+        // The files being worked on are usually still selected, and one of them can be a
+        // folder -- zipping one, say. That is not a destination, it is the subject.
+        var subjects = new HashSet<string>(
+            starting.Select(file => file.Path), StringComparer.OrdinalIgnoreCase);
+
+        var window = source;
+
         EventHandler? onReleased = null;
-        EventHandler<DragModifierEvent>? onClicked = null;
+        EventHandler? onBack = null;
         EventHandler? onCancelled = null;
+        EventHandler<DragModifierEvent>? onClicked = null;
         DispatcherTimer? giveUp = null;
 
-        // A click takes a moment to become a selection, and Space can come up inside
-        // that moment. The click still wins: it happened first, and letting go after
-        // choosing is how anyone would end this gesture.
-        var resolving = 0;
-        var releasedWhileResolving = false;
+        string? FolderIn(IReadOnlyList<SourceFile> selected) =>
+            selected.FirstOrDefault(
+                file => file.IsDirectory && !subjects.Contains(file.Path))?.Path;
 
-        void Finish(string? answer)
+        void Stop()
         {
             watcher.Waiting = false;
             watcher.SpaceReleased -= onReleased;
-            watcher.ClickedWhileWaiting -= onClicked;
+            watcher.BackRequested -= onBack;
             watcher.Cancelled -= onCancelled;
+            watcher.ClickedWhileWaiting -= onClicked;
 
             giveUp?.Stop();
             _hint?.Dismiss();
-
-            answered.TrySetResult(answer);
         }
 
         onReleased = (_, _) =>
         {
-            if (resolving > 0)
-            {
-                releasedWhileResolving = true;
-                return;
-            }
+            Stop();
 
-            Finish(string.Empty);
+            Task.Run(async () =>
+            {
+                await Task.Delay(140).ConfigureAwait(false);
+
+                var selected = await Core.Tools.StaExecutor
+                    .RunAsync(() => ShellSelection.FromWindow(window))
+                    .ConfigureAwait(false);
+
+                await Dispatcher.BeginInvoke(() =>
+                    answered.TrySetResult((WaitEnd.Done, FolderIn(selected))));
+            });
+        };
+
+        onBack = (_, _) =>
+        {
+            Stop();
+            answered.TrySetResult((WaitEnd.Back, null));
+        };
+
+        onCancelled = (_, _) =>
+        {
+            Stop();
+            answered.TrySetResult((WaitEnd.Cancelled, null));
         };
 
         onClicked = (_, click) =>
         {
-            resolving++;
-            var window = click.SourceWindow;
+            if (click.SourceWindow != IntPtr.Zero) window = click.SourceWindow;
+            var reading = window;
 
             Task.Run(async () =>
             {
-                // Long enough for Explorer to turn the click into a selection.
                 await Task.Delay(140).ConfigureAwait(false);
 
-                var hit = await Core.Tools.StaExecutor
-                    .RunAsync(() => ShellSelection.FromWindow(window))
+                var selected = await Core.Tools.StaExecutor
+                    .RunAsync(() => ShellSelection.FromWindow(reading))
                     .ConfigureAwait(false);
-
-                var picked = hit.FirstOrDefault(file => file.IsDirectory)?.Path;
 
                 await Dispatcher.BeginInvoke(() =>
                 {
-                    resolving--;
+                    if (!watcher.Waiting) return;
 
-                    // Clicking something that is not a folder is a miss, not an answer,
-                    // so the wait carries on and they can try again.
-                    if (picked is not null) Finish(picked);
-                    else if (releasedWhileResolving && resolving == 0) Finish(string.Empty);
+                    var folder = FolderIn(selected);
+                    _hint?.Say(folder is null ? "Pick a folder" : Path.GetFileName(folder));
                 });
             });
         };
 
-        onCancelled = (_, _) => Finish(null);
-
         watcher.Waiting = true;
         watcher.SpaceReleased += onReleased;
-        watcher.ClickedWhileWaiting += onClicked;
+        watcher.BackRequested += onBack;
         watcher.Cancelled += onCancelled;
+        watcher.ClickedWhileWaiting += onClicked;
 
         // A key-up that never arrives -- an elevated window taking focus mid-gesture is
         // enough -- would otherwise leave this waiting for good.
         giveUp = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-        giveUp.Tick += (_, _) => Finish(string.Empty);
+        giveUp.Tick += (_, _) =>
+        {
+            Stop();
+            answered.TrySetResult((WaitEnd.Done, null));
+        };
         giveUp.Start();
 
-        _hint ??= new ModeHintWindow();
-        _hint.ShowFor(Destination.NewFolder, screenX, screenY);
+        _hint ??= new CursorHintWindow();
+        _hint.Follow("Pick a folder", ModeGlyphs.Folder);
 
         return answered.Task;
     }

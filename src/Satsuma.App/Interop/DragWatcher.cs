@@ -41,6 +41,7 @@ public sealed class DragWatcher : IDisposable
 {
     private readonly Dispatcher _dispatcher;
     private readonly IReadOnlyDictionary<int, WheelKind> _keyMap;
+    private readonly IReadOnlySet<int> _backKeys;
 
     // Kept in fields so the GC cannot collect the delegates the hooks hold.
     private readonly HookProc _mouseProc;
@@ -114,10 +115,28 @@ public sealed class DragWatcher : IDisposable
     /// <summary>Enter, while Satsuma was waiting: that is enough files.</summary>
     public event EventHandler? ConfirmRequested;
 
+    /// <summary>
+    /// The back key, while Satsuma was waiting: undo the choice and show the wheel again.
+    /// </summary>
+    public event EventHandler? BackRequested;
+
+    /// <summary>
+    /// A wheel key that was being held has been let go.
+    ///
+    /// This is what ends a gesture that began during a drag. Pressing Enter to finish
+    /// something you are already holding a key for is a second act where there was one,
+    /// and the whole point of the wheel is that there is only ever one.
+    /// </summary>
+    public event EventHandler? WheelKeyReleased;
+
+    /// <summary>True while any wheel key is down, which is what makes it a drag gesture.</summary>
+    public bool WheelKeyHeld => _latched.Count > 0;
+
     public DragWatcher(AppSettings settings, Dispatcher dispatcher)
     {
         _dispatcher = dispatcher;
         _keyMap = settings.BuildKeyMap();
+        _backKeys = settings.BuildBackKeys();
 
         _mouseProc = MouseHookProc;
         _keyboardProc = KeyboardHookProc;
@@ -312,6 +331,13 @@ public sealed class DragWatcher : IDisposable
                         return Swallow;   // the drag source must not also see the Escape
                     }
                 }
+                else if (_backKeys.Contains(key) && Waiting)
+                {
+                    // Backs out of the waiting and puts the wheel up again. Swallowed
+                    // like the wheel keys, or Explorer takes it as type-ahead.
+                    Post(() => BackRequested?.Invoke(this, EventArgs.Empty));
+                    return Swallow;
+                }
                 else if (key == VK_RETURN && Waiting)
                 {
                     // The way out of a gathering. Swallowed, or Explorer opens whatever
@@ -461,6 +487,13 @@ public sealed class DragWatcher : IDisposable
                 // The only thing that unlatches a key. Letting go is the whole gesture.
                 var wasHeld = _latched.Remove(key);
                 if (wasHeld) Log.Write($"key 0x{key:X2} released");
+
+                // Letting go of the wheel key is how a gesture that started in a drag
+                // finishes: there is nothing else to press.
+                if (wasHeld && _keyMap.ContainsKey(key) && _latched.Count == 0)
+                {
+                    Post(() => WheelKeyReleased?.Invoke(this, EventArgs.Empty));
+                }
 
                 if (wasHeld && _keyMap.TryGetValue(key, out var released) && _armedKind == released)
                 {

@@ -26,15 +26,12 @@ public static class ModeGlyphs
         "M5,1.6 L5,10.6 M2.6,8.2 L5,10.6 L7.4,8.2 " +
         "M13,12.6 L13,3.6 M10.6,6 L13,3.6 L15.4,6");
 
-    /// <summary>Nothing picked yet: click some.</summary>
-    public static Geometry Plus { get; } = Frozen("M9,3 L9,15 M3,9 L15,9");
+    /// <summary>A sheet of paper, for "which files".</summary>
+    public static Geometry Page { get; } =
+        Frozen("M3.5,1 L9.5,1 L13.5,5 L13.5,15 L3.5,15 Z M9.5,1 L9.5,5 L13.5,5");
 
-    /// <summary>
-    /// Enter, as the key is drawn on it. Sits under the count while files are being
-    /// gathered, because that mode has no other way out and a mode you cannot leave is
-    /// worse than a mark you have to learn.
-    /// </summary>
-    public static Geometry Return { get; } = Frozen("M12,1 L12,6 L2,6 M5,3 L2,6 L5,9");
+    /// <summary>Done, on the tick there is to click.</summary>
+    public static Geometry Tick { get; } = Frozen("M2,7.5 L6,11.5 L13,3.5");
 
     /// <summary>The mark for a destination, or null where there is nothing to say.</summary>
     public static Geometry? For(Destination destination) => destination switch

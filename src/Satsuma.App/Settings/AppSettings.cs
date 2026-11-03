@@ -41,6 +41,15 @@ public sealed class AppSettings
     public string ActionsKey { get; set; } = "3";
 
     /// <summary>
+    /// Backs out of whatever Satsuma is waiting for and puts the wheel back up.
+    ///
+    /// The three wheel keys go forward; this one goes back, which is why it sits next to
+    /// them rather than being Escape. Escape ends the whole thing; this returns you to
+    /// the choice you had just made, having changed your mind about it.
+    /// </summary>
+    public string BackKey { get; set; } = "4";
+
+    /// <summary>
     /// Open Explorer on the results when a job finishes. Off by default: results land
     /// next to the original, which is usually the folder the drag started in and already
     /// on screen. The progress card can be clicked to reveal them instead.
@@ -104,6 +113,12 @@ public sealed class AppSettings
             }
         }
     }
+
+    /// <summary>
+    /// The codes for the back key. Not in the wheel map, because it opens nothing: it is
+    /// only ever read while Satsuma is already waiting for something.
+    /// </summary>
+    public IReadOnlySet<int> BuildBackKeys() => KeyNames.Parse(BackKey).ToHashSet();
 
     /// <summary>Bindings that would take a key Explorer needs during a drag.</summary>
     public IReadOnlyList<string> ExplorerClashes()

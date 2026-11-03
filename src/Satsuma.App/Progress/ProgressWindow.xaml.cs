@@ -179,9 +179,9 @@ public partial class ProgressWindow : Window
 
         Show();
 
-        var handle = new WindowInteropHelper(this).Handle;
-        SetWindowPos(handle, HWND_TOPMOST, left, top, width, height,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        WindowPlacement.Apply(
+            new WindowInteropHelper(this).Handle,
+            left, top, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW, "progress");
     }
 
     private static Brush Freeze(Brush brush)

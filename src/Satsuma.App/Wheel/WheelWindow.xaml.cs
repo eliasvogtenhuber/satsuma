@@ -534,11 +534,37 @@ public partial class WheelWindow : Window
             top = Math.Clamp(top, work.Top, Math.Max(work.Top, work.Bottom - size));
         }
 
+        Diagnostics.Log.Write(
+            $"wheel bounds: {left},{top} {size}x{size} " +
+            $"({_settings.WheelDiameter:0} at {scale:0.##}x)");
+
         return new Bounds(left, top, size, size);
     }
 
-    /// <summary>Far outside any monitor, where a frame can be painted unseen.</summary>
-    private const int OffScreen = -32000;
+    /// <summary>
+    /// Somewhere unseen to paint a frame, just below the monitor the wheel is about to
+    /// appear on.
+    ///
+    /// Parking in a far corner of the coordinate space is the obvious way to do this and
+    /// is wrong on a mixed-DPI desktop: that corner belongs to whichever monitor is
+    /// nearest to it, so the window changes DPI on the way out and again on the way back,
+    /// and Windows rescales it both times. Directly below its own monitor is still off
+    /// every screen, but it is that monitor the window stays nearest to, so the DPI never
+    /// moves.
+    /// </summary>
+    private static (int Left, int Top) ParkBelow(Bounds bounds)
+    {
+        var centre = new POINT(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
+        var monitor = MonitorFromPoint(centre, MONITOR_DEFAULTTONEAREST);
+        var info = new MONITORINFO
+        {
+            cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>()
+        };
+
+        return GetMonitorInfo(monitor, ref info)
+            ? (bounds.Left, info.rcMonitor.Bottom + 8)
+            : (-32000, -32000);
+    }
 
     /// <summary>
     /// Puts the window at its final size but off screen, while recording the bounds it is
@@ -551,8 +577,10 @@ public partial class WheelWindow : Window
         _bounds = bounds;
         _scale = bounds.Width > 0 ? bounds.Width / _settings.WheelDiameter : 1.0;
 
-        SetWindowPos(handle, HWND_TOPMOST, OffScreen, OffScreen,
-            bounds.Width, bounds.Height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        var (left, top) = ParkBelow(bounds);
+
+        WindowPlacement.Apply(handle, left, top, bounds.Width, bounds.Height,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW, "wheel park");
     }
 
     private void ApplyBounds(Bounds bounds)
@@ -564,9 +592,8 @@ public partial class WheelWindow : Window
         _bounds = bounds;
         _scale = bounds.Width > 0 ? bounds.Width / _settings.WheelDiameter : 1.0;
 
-        SetWindowPos(handle, HWND_TOPMOST,
-            bounds.Left, bounds.Top, bounds.Width, bounds.Height,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        WindowPlacement.Apply(handle, bounds.Left, bounds.Top, bounds.Width, bounds.Height,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW, "wheel");
     }
 
     /// <summary>

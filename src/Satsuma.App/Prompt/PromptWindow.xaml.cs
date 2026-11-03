@@ -106,6 +106,16 @@ public partial class PromptWindow : Window
     /// </summary>
     public void ShowAtCursor()
     {
+        GetCursorPos(out var cursor);
+
+        var monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+        var info = new MONITORINFO
+        {
+            cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>()
+        };
+
+        var known = GetMonitorInfo(monitor, ref info);
+
         // Realised off-screen first, so WPF can lay the card out and settle on a height
         // for this particular question. Measuring it by hand was close enough to look
         // right and wrong by a line, which is the worst of both: the card centres its
@@ -114,9 +124,18 @@ public partial class PromptWindow : Window
         Left = -20000;
         Top = -20000;
         Show();
-        UpdateLayout();
 
-        GetCursorPos(out var cursor);
+        // Then parked directly below the monitor it is about to appear on, which is
+        // still off every screen but keeps it nearest to that one monitor. It is laid
+        // out at that monitor's DPI and does not change scale on the way into place.
+        if (known)
+        {
+            SetWindowPos(
+                new WindowInteropHelper(this).Handle, HWND_TOPMOST,
+                cursor.X, info.rcMonitor.Bottom + 8, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+        }
+
+        UpdateLayout();
 
         var scale = DpiAt(cursor) / 96.0;
         var width = (int)Math.Round(ActualWidth * scale);
@@ -125,13 +144,7 @@ public partial class PromptWindow : Window
         var left = cursor.X - width / 2;
         var top = cursor.Y - height / 2;
 
-        var monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-        var info = new MONITORINFO
-        {
-            cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>()
-        };
-
-        if (GetMonitorInfo(monitor, ref info))
+        if (known)
         {
             var work = info.rcWork;
             left = Math.Clamp(left, work.Left, Math.Max(work.Left, work.Right - width));
@@ -149,22 +162,9 @@ public partial class PromptWindow : Window
             $"prompt: {_request.Title} at {left},{top} size={width}x{height} " +
             $"({ActualWidth:0}x{ActualHeight:0} at {scale:0.##}x)");
 
-        var handle = new WindowInteropHelper(this).Handle;
-        SetWindowPos(handle, HWND_TOPMOST, left, top, width, height, SWP_SHOWWINDOW);
-
-        // Laid out on one monitor and placed on another, the card lands in the middle of
-        // a DPI change: Windows offers WPF a rectangle scaled by the ratio between the
-        // two, WPF takes it, and the card arrives at the wrong size. Asking a second
-        // time, once it is already on the destination monitor, settles it.
-        if (GetWindowRect(handle, out var landed)
-            && (landed.Right - landed.Left != width || landed.Bottom - landed.Top != height))
-        {
-            Diagnostics.Log.Write(
-                $"prompt rescaled on landing: {landed.Right - landed.Left}x" +
-                $"{landed.Bottom - landed.Top}, asking again for {width}x{height}");
-
-            SetWindowPos(handle, HWND_TOPMOST, left, top, width, height, SWP_SHOWWINDOW);
-        }
+        WindowPlacement.Apply(
+            new WindowInteropHelper(this).Handle,
+            left, top, width, height, SWP_SHOWWINDOW, "prompt");
     }
 
     private static Brush Freeze(Brush brush)

@@ -229,6 +229,18 @@ public partial class App : Application
 
         await Task.Delay(1000);
 
+        // Adding to a shelf that is already open, which is the case that used to send
+        // the whole window off the screen and back.
+        var second = args.Count > flag + 2 ? args[flag + 2] : null;
+
+        if (second is not null && (File.Exists(second) || Directory.Exists(second)))
+        {
+            Log.Write("--shelf: adding while open");
+            ShowShelf(new[] { new SourceFile(second) });
+
+            await Task.Delay(1000);
+        }
+
         Log.Write("--shelf: closing");
         _shelf?.Hide();
 

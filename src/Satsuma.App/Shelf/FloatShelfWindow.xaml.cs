@@ -153,6 +153,17 @@ public partial class FloatShelfWindow : Window
     /// </summary>
     public void Reveal()
     {
+        // Already up, with a backdrop to crop from: there is nothing to place and
+        // nothing to photograph, only a new height to settle into. Going through the
+        // rest of this would park the shelf off the screen to measure it and bring it
+        // back, which is the whole window vanishing for a beat every time a file is
+        // added to one that was already open.
+        if (IsVisible && _wall is not null)
+        {
+            Reglaze();
+            return;
+        }
+
         var handle = EnsureWindow();
         if (handle == IntPtr.Zero) return;
 

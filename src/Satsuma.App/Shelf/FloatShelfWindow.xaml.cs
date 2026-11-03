@@ -237,6 +237,13 @@ public partial class FloatShelfWindow : Window
         Width = DesignWidth;
         SizeToContent = SizeToContent.Manual;
 
+        // Flushed before it is measured. An entry added or removed only becomes a chip
+        // in the visual tree on the next layout pass, so asking the panel how tall it
+        // wants to be before that answers for the contents it had last time -- which is
+        // exactly one change behind, every time.
+        UpdateLayout();
+
+        Body.InvalidateMeasure();
         Body.Measure(new Size(DesignWidth - Inset, double.PositiveInfinity));
         Height = Math.Ceiling(Body.DesiredSize.Height + Inset);
 
@@ -261,6 +268,14 @@ public partial class FloatShelfWindow : Window
 
         var scale = DpiAt(new POINT(_spotLeft, _spotTop)) / 96.0;
         var size = known ?? Measure(scale);
+
+        // The shelf is anchored by its top-left, so a chip arriving makes it grow
+        // downwards -- off the bottom of the screen if it was already parked there.
+        if (WorkArea(new POINT(_spotLeft, _spotTop), out var work, out _))
+        {
+            _spotLeft = Math.Clamp(_spotLeft, work.Left, Math.Max(work.Left, work.Right - size.Width));
+            _spotTop = Math.Clamp(_spotTop, work.Top, Math.Max(work.Top, work.Bottom - size.Height));
+        }
 
         Diagnostics.Log.Write(
             $"shelf: at {_spotLeft},{_spotTop} size={size.Width}x{size.Height} " +
@@ -302,6 +317,14 @@ public partial class FloatShelfWindow : Window
 
     private ShelfEntry? EntryAt(MouseEventArgs e) =>
         (e.OriginalSource as FrameworkElement)?.DataContext as ShelfEntry;
+
+    /// <summary>Takes everything off the shelf, leaving it open and empty.</summary>
+    public void Clear()
+    {
+        _entries.Clear();
+        UpdateFooter();
+        Reglaze();
+    }
 
     private void Remove(ShelfEntry entry)
     {

@@ -227,7 +227,7 @@ public partial class App : Application
         Log.Write("--shelf: first reveal");
         ShowShelf(new[] { new SourceFile(path) });
 
-        await Task.Delay(1200);
+        await Task.Delay(1000);
 
         Log.Write("--shelf: closing");
         _shelf?.Hide();
@@ -236,6 +236,23 @@ public partial class App : Application
 
         Log.Write("--shelf: second reveal");
         _shelf?.Reveal();
+
+        await Task.Delay(1000);
+
+        // The sequence that broke it: emptied by hand, closed, then filled again. The
+        // window kept the height it had while it was empty and clipped the chip.
+        Log.Write("--shelf: emptied");
+        _shelf?.Clear();
+
+        await Task.Delay(600);
+
+        Log.Write("--shelf: closing while empty");
+        _shelf?.Hide();
+
+        await Task.Delay(400);
+
+        Log.Write("--shelf: filled again");
+        ShowShelf(new[] { new SourceFile(path) });
     }
 
     private void TryShowPreview(IReadOnlyList<string> args)

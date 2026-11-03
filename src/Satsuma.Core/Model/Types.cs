@@ -125,14 +125,22 @@ public sealed record JobResult(
 }
 
 /// <summary>
-/// One file a job wrote, and the file it was made from.
+/// One file a job wrote, and the files it was made from.
 ///
-/// The source is what lets a result be delivered somewhere other than where the handler
+/// The sources are what let a result be delivered somewhere other than where the handler
 /// put it. Replacing an original needs to know which original, and no handler reports
-/// that, because until now nothing ever asked. It is null for results built from several
-/// inputs at once, like a merge, where there is no single original to go back to.
+/// that, because until now nothing ever asked.
+///
+/// A list rather than one path, because a merge is made from all of them: replacing the
+/// original there means replacing every file that went into it, and leaving them behind
+/// is not what "over the top" means to anyone who just merged four PDFs.
 /// </summary>
-public sealed record ProducedFile(string Path, string? SourcePath = null);
+public sealed record ProducedFile(string Path, IReadOnlyList<string> Sources)
+{
+    public ProducedFile(string path) : this(path, Array.Empty<string>()) { }
+
+    public ProducedFile(string path, string source) : this(path, new[] { source }) { }
+}
 
 /// <summary>Progress for the small window that appears while work runs.</summary>
 public sealed record JobProgress(string Title, double Fraction, string? Detail = null);

@@ -270,16 +270,20 @@ public partial class WheelWindow : Window
     /// The file is whatever the click selected, which has to be read from Explorer,
     /// because unlike a drag there is no data object to ask.
     /// </summary>
-    public void ShowForClick(WheelKind kind, IReadOnlyList<SourceFile> files, int screenX, int screenY)
+    public void ShowForClick(
+        WheelKind kind, IReadOnlyList<SourceFile> files,
+        int screenX, int screenY, bool buttonDown = false)
     {
         if (IsVisible) return;
 
         IsSticky = true;
 
-        // The click that opened the wheel has not been released yet. Without this, that
-        // release lands on the hub sitting under the pointer and dismisses the wheel the
-        // instant it appears.
-        _ignoreNextMouseUp = true;
+        // Only when a click is what opened the wheel, because then that click has not
+        // been released yet and its release would land on the hub sitting under the
+        // pointer and dismiss the wheel the instant it appeared. Opened by the key alone
+        // there is no such release, and swallowing one made the first real click do
+        // nothing -- which is the "you have to click twice".
+        _ignoreNextMouseUp = buttonDown;
 
         ShowFor(kind, files, screenX, screenY);
     }

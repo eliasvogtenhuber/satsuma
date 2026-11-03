@@ -21,6 +21,15 @@ public sealed record DragModifierEvent(
     /// screen point answers "the wheel", not the Explorer window behind it.
     /// </summary>
     public IntPtr SourceWindow { get; init; }
+
+    /// <summary>
+    /// True when the left button is still down as this is raised, which it is when a
+    /// click is what opened the wheel. The release of that click then has to be ignored,
+    /// since it lands on the wheel that just appeared under the pointer. When the wheel
+    /// was opened by the key alone there is no such release, and swallowing one costs
+    /// the user their first real click.
+    /// </summary>
+    public bool ButtonDown { get; init; }
 }
 
 /// <summary>
@@ -253,7 +262,7 @@ public sealed class DragWatcher : IDisposable
                         var under = GetAncestor(WindowFromPoint(point), GA_ROOT);
                         Post(() => ClickWheelRequested?.Invoke(this,
                             new DragModifierEvent(kind, point.X, point.Y, point.X, point.Y)
-                            { SourceWindow = under }));
+                            { SourceWindow = under, ButtonDown = true }));
                     }
                     else
                     {

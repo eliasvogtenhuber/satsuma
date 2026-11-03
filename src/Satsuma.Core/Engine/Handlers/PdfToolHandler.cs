@@ -273,12 +273,93 @@ public sealed class PdfToolHandler : IJobHandler
             _ => 80
         };
 
-        var target = OutputNaming.Next(source.Path, ".pdf", "compressed");
+        var before = new FileInfo(source.Path).Length;
 
-        var built = await StaExecutor.RunAsync(() =>
+        // Two ways to make a PDF smaller, and which one wins depends on what is inside.
+        //
+        // A scan is pixels, and re-encoding them at a lower quality is the whole saving.
+        // A typeset document is instructions, and rasterising those is not compression at
+        // all: it throws the text away and leaves JPEGs that are far bigger than the
+        // instructions were. Only the first was ever tried, so Compress on anything
+        // typeset refused with "already as small as this can usefully make it" -- wrong,
+        // and unhelpful about being wrong.
+        //
+        // So both are tried and the smaller wins, which also picks correctly without
+        // having to classify the document: a scan rasterises well and a text page does
+        // not, and the file sizes say so.
+        var rebuilt = await StaExecutor
+            .RunAsync(() => Rebuild(source.Path, cancellationToken), cancellationToken)
+            .ConfigureAwait(false);
+
+        var rasterised = await StaExecutor
+            .RunAsync(() => Rasterise(source.Path, quality, dpi, progress, cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var best = new[] { rebuilt, rasterised }
+            .Where(bytes => bytes is { Length: > 0 } && bytes.Length < before)
+            .OrderBy(bytes => bytes!.Length)
+            .FirstOrDefault();
+
+        if (best is null)
         {
-            var pages = PdfRenderer.Render(source.Path, dpi, cancellationToken);
-            if (pages.Count == 0) return false;
+            return JobResult.Fail(
+                rasterised is null && rebuilt is null
+                    ? "This PDF could not be read."
+                    : "Nothing to gain here: this PDF is text rather than scanned pages, " +
+                      "and it is already stored compactly.");
+        }
+
+        var target = OutputNaming.Next(source.Path, ".pdf", "compressed");
+        await File.WriteAllBytesAsync(target, best, cancellationToken).ConfigureAwait(false);
+
+        progress?.Report(1);
+        return JobResult.Ok(target);
+    }
+
+    /// <summary>
+    /// The document written out again, page for page. Lossless: the text stays text.
+    ///
+    /// This wins on anything that was saved carelessly -- uncompressed streams, resources
+    /// repeated per page -- which is most of what comes out of an office suite.
+    /// </summary>
+    private static byte[]? Rebuild(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = PdfDocument.Open(path);
+            if (document.NumberOfPages == 0) return null;
+
+            var builder = new PdfDocumentBuilder();
+
+            for (var page = 1; page <= document.NumberOfPages; page++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                builder.AddPage(document, page);
+            }
+
+            return builder.Build();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // Some documents will not copy page by page. The other path still might.
+            return null;
+        }
+    }
+
+    /// <summary>Every page re-encoded as a JPEG, which is the right answer for a scan.</summary>
+    private static byte[]? Rasterise(
+        string path, int quality, int dpi,
+        IProgress<double>? progress, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var pages = PdfRenderer.Render(path, dpi, cancellationToken);
+            if (pages.Count == 0) return null;
 
             var builder = new PdfDocumentBuilder();
 
@@ -296,26 +377,19 @@ public sealed class PdfToolHandler : IJobHandler
                 var sheet = builder.AddPage(width, height);
                 sheet.AddJpeg(jpeg, new UglyToad.PdfPig.Core.PdfRectangle(0, 0, width, height));
 
-                progress?.Report((index + 1) / (double)pages.Count);
+                progress?.Report((index + 1) / (double)pages.Count * 0.9);
             }
 
-            File.WriteAllBytes(target, builder.Build());
-            return true;
-        }, cancellationToken).ConfigureAwait(false);
-
-        if (!built) return JobResult.Fail("This PDF has no pages to compress.");
-
-        // A "compressed" file that grew is not a result worth keeping.
-        var before = new FileInfo(source.Path).Length;
-        var after = new FileInfo(target).Length;
-
-        if (after >= before)
-        {
-            ImagePipeline.TryDelete(target);
-            return JobResult.Fail("Already as small as this can usefully make it.");
+            return builder.Build();
         }
-
-        return JobResult.Ok(target);
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private static string? Operation(string id)

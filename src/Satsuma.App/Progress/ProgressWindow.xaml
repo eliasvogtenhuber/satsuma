@@ -93,7 +93,7 @@
                  which is the part that looked out of place next to the wheel. -->
             <Grid x:Name="BarTrack" Grid.Row="2" Grid.ColumnSpan="2" Height="3" Margin="0,11,0,0"
                   HorizontalAlignment="Stretch">
-                <Border CornerRadius="1.5" Background="#2EFFFFFF" />
+                <Border x:Name="BarBase" CornerRadius="1.5" Background="#2EFFFFFF" />
                 <Border x:Name="BarFill" CornerRadius="1.5" HorizontalAlignment="Left" Width="0">
                     <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">

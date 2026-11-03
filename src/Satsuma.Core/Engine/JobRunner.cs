@@ -128,8 +128,9 @@ public sealed class JobRunner
                     .ExecuteAsync(request, inner, cancellationToken)
                     .ConfigureAwait(false);
 
-                Collect(result, outputs, failures,
-                    request.Files.Count == 1 ? request.Files[0] : null);
+                // An aggregate is made from all of them, which is what lets "over the
+                // top" replace every file that went into a merge.
+                Collect(result, outputs, failures, request.Files);
             }
             else
             {
@@ -161,7 +162,7 @@ public sealed class JobRunner
                             .ExecuteAsync(single, inner, cancellationToken)
                             .ConfigureAwait(false);
 
-                        Collect(result, outputs, failures, file);
+                        Collect(result, outputs, failures, new[] { file });
                     }
                     catch (OperationCanceledException)
                     {
@@ -188,15 +189,17 @@ public sealed class JobRunner
     }
 
     private static void Collect(
-        JobResult result, List<ProducedFile> outputs, List<string> failures, SourceFile? source)
+        JobResult result, List<ProducedFile> outputs, List<string> failures,
+        IReadOnlyList<SourceFile> sources)
     {
-        var label = source?.Name;
+        var label = sources.Count == 1 ? sources[0].Name : null;
+        var paths = sources.Select(file => file.Path).ToArray();
 
         switch (result.Status)
         {
             case JobStatus.Succeeded:
                 outputs.AddRange(result.OutputPaths
-                    .Select(path => new ProducedFile(path, source?.Path)));
+                    .Select(path => new ProducedFile(path, paths)));
                 break;
             case JobStatus.Failed:
             case JobStatus.Skipped:

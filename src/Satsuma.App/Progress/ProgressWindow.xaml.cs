@@ -28,7 +28,13 @@ public partial class ProgressWindow : Window
 
     private static readonly Brush ProgressNormal = Freeze(new SolidColorBrush(Colors.White));
     private static readonly Brush ProgressCancelled = Freeze(new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)));
-    private static readonly Brush ProgressPartial = Freeze(new SolidColorBrush(Color.FromRgb(0xE8, 0xB4, 0x4E)));
+
+    /// <summary>
+    /// The one colour in Satsuma that means "no". It is the same red the prompt outlines
+    /// a value it will not accept with, which is the point: there is white for what
+    /// worked, grey for what was stopped, and this. An amber fourth hue for "partly" had
+    /// no home anywhere else in the app and read as decoration.
+    /// </summary>
     private static readonly Brush ProgressFailed = Freeze(new SolidColorBrush(Color.FromRgb(0xE2, 0x6D, 0x5A)));
 
     public ProgressWindow()
@@ -107,7 +113,16 @@ public partial class ProgressWindow : Window
         {
             TitleText.Text = $"{result.Outputs.Count} done, {result.Failures.Count} failed";
             DetailText.Text = result.Failures[0];
-            BarFill.Background = ProgressPartial;
+
+            // Both at once, in the two colours that already mean something: the bar
+            // fills white as far as the work got and the rest of the track is the red
+            // for no. It says which proportion failed, which one flat colour could not.
+            BarBase.Background = ProgressFailed;
+            BarFill.Background = ProgressNormal;
+
+            var total = result.Outputs.Count + result.Failures.Count;
+            _fraction = total > 0 ? result.Outputs.Count / (double)total : 1;
+            ApplyFraction();
         }
         else
         {

@@ -96,60 +96,73 @@ public static class Delivery
     }
 
     /// <summary>
-    /// Puts each result where its original was, and sends the original to the bin.
+    /// Puts each result where its originals were, and sends those originals to the bin.
     ///
-    /// One original can have produced several files -- a split is the obvious case -- and
-    /// there is no single place for those to land. Then the original still goes, because
-    /// that is what was asked for, and the pieces stay where the handler wrote them,
-    /// which is beside where it used to be.
+    /// Three shapes, settled by one rule. One file in and one out -- a conversion -- and
+    /// the result takes the original's name. One in and several out, which is a split:
+    /// there is no single place for those to land, so the original still goes, because
+    /// that is what was asked for, and the pieces stay beside where it used to be.
+    /// Several in and one out, which is a merge: every one of them goes, and the result
+    /// takes the name of the first, the file the wheel was opened on.
+    ///
+    /// The rule: group the results by the set of files they came from, bin that set, and
+    /// rename onto the first of them when the group produced exactly one file.
     /// </summary>
     private static DeliveryResult OverTheOriginals(IReadOnlyList<ProducedFile> produced)
     {
         var landed = new List<ProducedFile>(produced.Count);
         var problems = new List<string>();
 
-        // Results built from several inputs at once have no original to replace.
-        foreach (var orphan in produced.Where(file => file.SourcePath is null))
+        // Nothing claims to have come from anything: nothing to replace.
+        foreach (var orphan in produced.Where(file => file.Sources.Count == 0))
         {
             landed.Add(orphan);
         }
 
         var groups = produced
-            .Where(file => file.SourcePath is not null)
-            .GroupBy(file => file.SourcePath!, StringComparer.OrdinalIgnoreCase);
+            .Where(file => file.Sources.Count > 0)
+            .GroupBy(
+                file => string.Join("|", file.Sources).ToLowerInvariant(),
+                StringComparer.Ordinal);
 
         foreach (var group in groups)
         {
-            var source = group.Key;
             var pieces = group.ToList();
+            var sources = pieces[0].Sources
+                .Where(path => File.Exists(path) || Directory.Exists(path))
+                .ToList();
 
-            if (!File.Exists(source) && !Directory.Exists(source))
+            if (sources.Count == 0)
             {
                 landed.AddRange(pieces);
                 continue;
             }
 
-            if (!RecycleBin.Covers(source))
+            // Nowhere to put an original back from, so none of them go. A quiet
+            // unrecoverable delete is not a feature, and half a merge's inputs in the
+            // bin and half not would be worse than neither.
+            var unprotected = sources.Where(path => !RecycleBin.Covers(path)).ToList();
+
+            if (unprotected.Count > 0)
             {
-                // Nowhere to put the original back from, so it is left alone and the
-                // results stay beside it. A quiet unrecoverable delete is not a feature.
                 problems.Add(
-                    $"{Path.GetFileName(source)}: kept, because a delete here would not " +
-                    "reach the Recycle Bin.");
+                    $"{Path.GetFileName(unprotected[0])}: kept, because a delete here " +
+                    "would not reach the Recycle Bin.");
 
                 landed.AddRange(pieces);
                 continue;
             }
 
-            // Worked out before the original goes, since the name comes from it.
-            var directory = Path.GetDirectoryName(source) ?? Directory.GetCurrentDirectory();
-            var stem = Path.GetFileNameWithoutExtension(source);
+            // Worked out before anything goes, since the name comes from the first one.
+            var first = sources[0];
+            var directory = Path.GetDirectoryName(first) ?? Directory.GetCurrentDirectory();
+            var stem = Path.GetFileNameWithoutExtension(first);
 
-            if (!RecycleBin.Send(source))
+            var stuck = sources.Where(path => !RecycleBin.Send(path)).ToList();
+
+            if (stuck.Count > 0)
             {
-                problems.Add($"{Path.GetFileName(source)}: could not be moved to the bin.");
-                landed.AddRange(pieces);
-                continue;
+                problems.Add($"{Path.GetFileName(stuck[0])}: could not be moved to the bin.");
             }
 
             if (pieces.Count > 1)

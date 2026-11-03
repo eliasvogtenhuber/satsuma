@@ -227,6 +227,28 @@ internal static class Program
             {
                 Check("the pdf has a page", PdfRenderer.PageCount(pdf.Outputs[0]) >= 1,
                     $"{PdfRenderer.PageCount(pdf.Outputs[0])} pages");
+
+                // A typeset PDF out of an office suite, which is the case rasterising
+                // cannot help with and used to refuse outright. Satsuma's own PDFs are
+                // written by the same library that would rewrite them and so have
+                // nothing to give back, which is why this is tested on one from
+                // somewhere else.
+                var squeezed = await Run(
+                    Leaf(ToolCatalog.For(FileCategory.Pdf), "tool.pdf.compress.75"),
+                    new[] { new SourceFile(pdf.Outputs[0]) }, FileCategory.Pdf);
+
+                Check("compress a typeset PDF", squeezed.Outputs.Count == 1, Describe(squeezed));
+
+                if (squeezed.Outputs.Count == 1)
+                {
+                    var was = new FileInfo(pdf.Outputs[0]).Length;
+                    var now = new FileInfo(squeezed.Outputs[0]).Length;
+
+                    Check("it shrank without being rasterised",
+                        now < was && PdfRenderer.PageCount(squeezed.Outputs[0])
+                            == PdfRenderer.PageCount(pdf.Outputs[0]),
+                        $"{Kb(was)} -> {Kb(now)}");
+                }
             }
 
             var backToText = await Run(documentFormats.First(i => i.OutputExtension == ".txt"),
@@ -1603,9 +1625,31 @@ internal static class Program
             && pieces.Produced.All(file => File.Exists(file.Path)),
             "2 pieces kept");
 
-        // A merge has no single original, so in place has nothing to act on.
-        var orphan = Make("merged.pdf");
-        var kept = Delivery.Deliver(Destination.InPlace, One(orphan), "Merge");
+        // A merge is made from all its inputs, so over the top means all of them go and
+        // the result takes the name of the first -- the one the wheel was opened on.
+        var partA = Make("merge-a.pdf", "a");
+        var partB = Make("merge-b.pdf", "b");
+        var partC = Make("merge-c.pdf", "c");
+        var output = Make("merge-a-merged.pdf", "abc");
+
+        var collapsed = Delivery.Deliver(Destination.InPlace,
+            new[] { new ProducedFile(output, new[] { partA, partB, partC }) }, "Merge");
+
+        var expectedMerge = Path.Combine(home, "satsuma-selftest-merge-a.pdf");
+
+        Check("a merge in place takes the first file's name",
+            collapsed.Problems.Count == 0
+            && collapsed.Produced.Count == 1
+            && collapsed.Produced[0].Path == expectedMerge
+            && File.ReadAllText(expectedMerge) == "abc",
+            Path.GetFileName(collapsed.Produced[0].Path));
+
+        Check("and every file that went into it is gone",
+            !File.Exists(partB) && !File.Exists(partC), "all binned");
+
+        // Nothing claiming an origin has nothing to replace.
+        var orphan = Make("stray.pdf");
+        var kept = Delivery.Deliver(Destination.InPlace, One(orphan), "Convert");
 
         Check("a result with no original is left alone",
             kept.Produced.Count == 1 && kept.Produced[0].Path == orphan && File.Exists(orphan),

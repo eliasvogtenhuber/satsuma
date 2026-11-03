@@ -137,6 +137,14 @@ public partial class PromptWindow : Window
 
         UpdateLayout();
 
+        // Measured, then frozen. Leaving SizeToContent on gives WPF the last word, and
+        // the backdrop is set after this point: an Image with a source contributes its
+        // own natural size, so the card would grow to fit the photograph of itself and
+        // then be photographed again at that size. That is the "sometimes it is huge"
+        // -- it depended on how big the first capture happened to be.
+        Height = ActualHeight;
+        SizeToContent = SizeToContent.Manual;
+
         var scale = DpiAt(cursor) / 96.0;
         var width = (int)Math.Round(ActualWidth * scale);
         var height = (int)Math.Round(ActualHeight * scale);

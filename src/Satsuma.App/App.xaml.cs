@@ -294,7 +294,7 @@ public partial class App : Application
         // produced a visible flicker on every open.
         var upFront = _shellWarm ? ReadSelection(e.SourceWindow) : Array.Empty<SourceFile>();
 
-        _wheel.ShowForClick(e.Wheel, upFront, e.ScreenX, e.ScreenY);
+        _wheel.ShowForClick(e.Wheel, upFront, e.ScreenX, e.ScreenY, e.ButtonDown);
 
         // Cold, or nothing selected yet because a click is still being processed.
         if (upFront.Count == 0) SeedFromSelectionAsync(_wheel, e.SourceWindow, delayMs: 130);
@@ -880,6 +880,15 @@ public partial class App : Application
         {
             result = await DeliverAsync(result, destination, choice.Item.Label, folder);
         }
+
+        // Until this was here a failed job left nothing behind at all, and the only
+        // record of what went wrong was a card that dismissed itself after six seconds.
+        Log.Write(
+            $"job {choice.Item.Id} on {choice.Files.Count} file(s): " +
+            $"{result.Outputs.Count} out, {result.Failures.Count} failed" +
+            (result.Cancelled ? ", cancelled" : string.Empty));
+
+        foreach (var failure in result.Failures) Log.Write($"  failed: {failure}");
 
         card.Complete(result, choice.Item.Label);
 

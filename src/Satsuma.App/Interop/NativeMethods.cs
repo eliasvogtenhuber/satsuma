@@ -93,6 +93,17 @@ internal static class NativeMethods
 
     internal static readonly IntPtr HWND_TOPMOST = new(-1);
 
+    internal const int SW_HIDE = 0;
+
+    /// <summary>
+    /// Hides a window without WPF knowing, so it can be taken out of a screen capture
+    /// and put back in the same breath. Window.Hide() would tear down more than that and
+    /// is visible as a flicker; this is a single call either way.
+    /// </summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
     internal const uint SWP_NOSIZE = 0x0001;
     internal const uint SWP_NOMOVE = 0x0002;
     internal const uint SWP_NOACTIVATE = 0x0010;

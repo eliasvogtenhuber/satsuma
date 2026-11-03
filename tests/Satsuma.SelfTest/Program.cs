@@ -870,8 +870,12 @@ internal static class Program
             tools.Any(t => t.HasChildren),
             "Compress and Resize drill in");
 
+        // Actions transform nothing, so no handler can rule one out and the wheel shows
+        // the whole catalogue whatever is selected. Counted against the catalogue rather
+        // than a number, so adding one does not look like a regression.
         var actions = Runner.BuildWheel(WheelKind.Actions, FileCategory.Image, image);
-        Check("actions always offered", actions.Count == 6, $"{actions.Count} slices");
+        Check("actions always offered", actions.Count == ActionCatalog.All.Count,
+            $"{actions.Count} of {ActionCatalog.All.Count} slices");
 
         // A file Satsuma knows nothing about offers nothing, rather than everything.
         var unknown = Runner.BuildWheel(WheelKind.Formats, FileCategory.Unknown,
@@ -1592,7 +1596,39 @@ internal static class Program
         }
 
         static ProducedFile[] One(string path, string? source = null) =>
-            new[] { new ProducedFile(path, source) };
+            new[] { source is null ? new ProducedFile(path) : new ProducedFile(path, source) };
+
+        // Move and Copy to, which the Actions wheel offers side by side.
+        var subject = Make("send-me.txt", "here");
+        var elsewhere = Path.Combine(home, "sent");
+        Directory.CreateDirectory(elsewhere);
+
+        Delivery.CopyTo(subject, Path.Combine(elsewhere, "copied.txt"));
+
+        Check("copy to leaves the original",
+            File.Exists(subject) && File.Exists(Path.Combine(elsewhere, "copied.txt")),
+            "both there");
+
+        Delivery.MoveTo(subject, Path.Combine(elsewhere, "moved.txt"));
+
+        Check("move to does not",
+            !File.Exists(subject) && File.Exists(Path.Combine(elsewhere, "moved.txt")),
+            "only the new one");
+
+        var tree = Path.Combine(home, "a folder");
+        Directory.CreateDirectory(tree);
+        File.WriteAllText(Path.Combine(tree, "inside.txt"), "deep");
+
+        Delivery.CopyTo(tree, Path.Combine(elsewhere, "a folder"));
+
+        Check("and a whole folder copies with its contents",
+            File.Exists(Path.Combine(elsewhere, "a folder", "inside.txt"))
+            && File.Exists(Path.Combine(tree, "inside.txt")),
+            "tree copied");
+
+        var actions = ActionCatalog.All.Select(item => item.Id).ToList();
+        Check("the wheel offers both", actions.Contains("act.move") && actions.Contains("act.copyto"),
+            $"{actions.Count} actions");
 
         Check("the Recycle Bin covers a normal drive", RecycleBin.Covers(home), home[..2]);
         Check("and not a network path", !RecycleBin.Covers(@"\\server\share\file.txt"),

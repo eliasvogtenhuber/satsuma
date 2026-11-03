@@ -33,7 +33,7 @@ There are two ways in.
 | --- | --- | --- |
 | **1** | Convert to | Output formats for whatever you are dragging |
 | **2** | Tools | Compress, resize, rotate, trim, normalise, and so on |
-| **3** | Actions | Reveal, Float, Copy, Move, Copy path, Terminal |
+| **3** | Actions | Reveal, Float, Copy, Move, Copy to, Copy path, Terminal |
 | **4** | — | Backs out of a question Satsuma is asking and puts the wheel back |
 
 Then:
@@ -92,6 +92,18 @@ of, so the label grows a tick to click, and **Enter** works too.
 
 **4** backs out of any of this — the folder question, the file selection — and puts the
 wheel back up, so you can pick something else. **Esc** calls the whole thing off.
+
+### The shelf
+
+**Float** parks files on a small glass tray that stays on top, for the case where the
+source and the destination are never on screen together: park them, go and find the
+folder, then drag them off. Click one to open it, drag it off to copy it somewhere,
+right-click to take it off the shelf. The cross closes the tray without emptying it, and
+the tray menu brings it back.
+
+**Move** and **Copy to** both ask for a folder. Neither ever overwrites: a name that is
+already taken gets " (2)". Move leaves nothing behind; Copy to leaves the original where
+it was.
 
 ### Why number keys and not Shift, Ctrl and Alt
 

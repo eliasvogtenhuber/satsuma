@@ -195,13 +195,14 @@ public static class Delivery
     }
 
     /// <summary>
-    /// Moves a file or a whole folder.
+    /// Moves a file or a whole folder, across drives if it has to.
     ///
-    /// <see cref="Directory.Move"/> is a rename and refuses to cross volumes, which a
-    /// chosen folder very well might, so a folder that will not move is copied across
-    /// and the original removed.
+    /// <see cref="Directory.Move"/> is a rename and refuses to cross volumes -- "Source
+    /// and destination path must have identical roots" -- which a folder being sent to
+    /// another drive very well might. <see cref="File.Move"/> has no such limit, so only
+    /// folders need the fallback: copy the tree across, then remove the original.
     /// </summary>
-    private static void Move(string from, string to)
+    public static void MoveTo(string from, string to)
     {
         if (!Directory.Exists(from))
         {
@@ -219,6 +220,15 @@ public static class Delivery
             Directory.Delete(from, recursive: true);
         }
     }
+
+    /// <summary>Copies a file or a whole folder, leaving the original where it is.</summary>
+    public static void CopyTo(string from, string to)
+    {
+        if (Directory.Exists(from)) CopyTree(from, to);
+        else File.Copy(from, to, overwrite: false);
+    }
+
+    private static void Move(string from, string to) => MoveTo(from, to);
 
     private static void CopyTree(string from, string to)
     {

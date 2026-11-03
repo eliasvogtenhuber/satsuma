@@ -20,6 +20,11 @@ public static class ActionCatalog
         new WheelItem("act.float", "Float", WheelKind.Actions, Hint: "Park on the shelf"),
         new WheelItem("act.copy", "Copy", WheelKind.Actions, Hint: "To the clipboard"),
         new WheelItem("act.move", "Move", WheelKind.Actions, Hint: "Pick a folder"),
+
+        // The twin of Move, and kept flat beside it rather than tucked under a shared
+        // parent. Folding the two together would save a slice and cost a step, and the
+        // step is the whole thing Satsuma is trying not to charge for.
+        new WheelItem("act.copyto", "Copy to", WheelKind.Actions, Hint: "Pick a folder"),
         new WheelItem("act.path", "Copy path", WheelKind.Actions),
         new WheelItem("act.terminal", "Terminal", WheelKind.Actions, Hint: "Open here"),
     };

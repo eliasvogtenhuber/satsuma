@@ -27,7 +27,8 @@ public static class QuickActions
                 "act.copy" => CopyToClipboard(files),
                 "act.path" => CopyPaths(files),
                 "act.terminal" => OpenTerminal(files),
-                "act.move" => Move(files),
+                "act.move" => SendTo(files, keepOriginal: false),
+                "act.copyto" => SendTo(files, keepOriginal: true),
                 "act.float" => Float(files, onFloat),
                 _ => new ActionOutcome(false, $"Unknown action {actionId}.")
             };
@@ -130,11 +131,22 @@ public static class QuickActions
         return new ActionOutcome(false, "Could not open a terminal.");
     }
 
-    private static ActionOutcome Move(IReadOnlyList<SourceFile> files)
+    /// <summary>
+    /// Move and Copy to, which differ only in whether the original stays.
+    ///
+    /// Neither ever overwrites: the target name goes through the same collision naming
+    /// everything else uses, so dropping a second report.pdf into a folder leaves the
+    /// first one alone and lands beside it.
+    /// </summary>
+    private static ActionOutcome SendTo(IReadOnlyList<SourceFile> files, bool keepOriginal)
     {
+        var verb = keepOriginal ? "Copy" : "Move";
+
         using var dialog = new System.Windows.Forms.FolderBrowserDialog
         {
-            Description = files.Count == 1 ? $"Move {files[0].Name} to" : $"Move {files.Count} items to",
+            Description = files.Count == 1
+                ? $"{verb} {files[0].Name} to"
+                : $"{verb} {files.Count} items to",
             UseDescriptionForTitle = true,
             InitialDirectory = files[0].Directory,
             ShowNewFolderButton = true
@@ -146,7 +158,7 @@ public static class QuickActions
         }
 
         var destination = dialog.SelectedPath;
-        var moved = 0;
+        var done = 0;
         var failures = new List<string>();
 
         foreach (var file in files)
@@ -158,10 +170,10 @@ public static class QuickActions
                     Path.GetFileNameWithoutExtension(file.Path),
                     file.IsDirectory ? string.Empty : Path.GetExtension(file.Path));
 
-                if (file.IsDirectory) Directory.Move(file.Path, target);
-                else File.Move(file.Path, target);
+                if (keepOriginal) Core.Util.Delivery.CopyTo(file.Path, target);
+                else Core.Util.Delivery.MoveTo(file.Path, target);
 
-                moved++;
+                done++;
             }
             catch (Exception ex)
             {
@@ -169,12 +181,14 @@ public static class QuickActions
             }
         }
 
+        var past = keepOriginal ? "Copied" : "Moved";
+
         if (failures.Count > 0)
         {
-            return new ActionOutcome(moved > 0, $"Moved {moved}, {failures.Count} failed");
+            return new ActionOutcome(done > 0, $"{past} {done}, {failures.Count} failed");
         }
 
-        return new ActionOutcome(true, moved == 1 ? "Moved" : $"Moved {moved} items");
+        return new ActionOutcome(true, done == 1 ? past : $"{past} {done} items");
     }
 
     private static ActionOutcome Float(

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media.Imaging;
 using Satsuma.App.Glass;
 using Satsuma.App.Interop;
 using Satsuma.Core.Model;
@@ -78,6 +79,11 @@ public partial class FloatShelfWindow : Window
         {
             e.Handled = true;
             Hide();
+
+            // A whole monitor's worth of pixels, of no use to a window nobody can see.
+            // The next reveal takes a fresh one anyway, since by then what is behind
+            // the shelf will have moved on.
+            _wall = null;
         };
 
         CloseButton.MouseEnter += (_, _) => CloseButton.Background = Tint(0x26);
@@ -156,7 +162,7 @@ public partial class FloatShelfWindow : Window
             ? new POINT(_spotLeft, _spotTop)
             : (GetCursorPos(out var cursor) ? cursor : new POINT(0, 0));
 
-        if (!WorkArea(anchor, out var work, out var scale)) return;
+        if (!WorkArea(anchor, out var work, out var screen, out var scale)) return;
 
         // Parked just below that monitor rather than in a far corner of the coordinate
         // space. The far corner belongs to whichever monitor is nearest it, so on a
@@ -165,10 +171,17 @@ public partial class FloatShelfWindow : Window
         // ratio. That is why the first shelf came out a different size from every one
         // after it: 258 units wide became 412 on the way across, and the next reveal
         // bounced it most of the way back.
-        SetWindowPos(handle, HWND_TOPMOST, work.Left, work.Bottom + 8, 0, 0,
+        // Below the whole monitor rather than below its work area, so it is not sitting
+        // on the taskbar while it is meant to be out of sight -- and so it is nowhere
+        // near the photograph taken next.
+        SetWindowPos(handle, HWND_TOPMOST, work.Left, screen.Bottom + 8, 0, 0,
             SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
         var size = Measure(scale);
+
+        // Taken here, with the shelf parked off the monitor, which is the one moment it
+        // can be done without hiding anything. Every reglaze after this is a crop.
+        TakeWall(work);
 
         if (!_placed)
         {
@@ -203,7 +216,10 @@ public partial class FloatShelfWindow : Window
         return new WindowInteropHelper(this).Handle;
     }
 
-    private static bool WorkArea(POINT at, out RECT work, out double scale)
+    private static bool WorkArea(POINT at, out RECT work, out double scale) =>
+        WorkArea(at, out work, out _, out scale);
+
+    private static bool WorkArea(POINT at, out RECT work, out RECT screen, out double scale)
     {
         var info = new MONITORINFO
         {
@@ -213,8 +229,55 @@ public partial class FloatShelfWindow : Window
         var found = GetMonitorInfo(MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST), ref info);
 
         work = info.rcWork;
+        screen = info.rcMonitor;
         scale = DpiAt(at) / 96.0;
         return found;
+    }
+
+    /// <summary>
+    /// A photograph of the whole monitor, taken while the shelf is parked off it.
+    ///
+    /// The shelf is the one surface here that changes shape while it is on screen, and
+    /// a fresh capture each time meant hiding it for the length of a BitBlt -- which is
+    /// the blink you see when a file lands on it. Everything it needs is already in this
+    /// one picture, so a chip arriving is a crop rather than a photograph, and the
+    /// window never has to leave the screen to have its own glass retaken.
+    ///
+    /// It goes stale if what is behind the shelf changes, the same way every other piece
+    /// of glass in Satsuma does. A fresh one is taken each time the shelf is revealed.
+    /// </summary>
+    private BitmapSource? _wall;
+
+    private int _wallLeft;
+    private int _wallTop;
+
+    private void TakeWall(RECT work)
+    {
+        _wall = ScreenCapture.Capture(
+            work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top);
+
+        _wallLeft = work.Left;
+        _wallTop = work.Top;
+    }
+
+    /// <summary>The piece of the wall the shelf covers, or null if it is not in it.</summary>
+    private BitmapSource? CropWall(int x, int y, int width, int height)
+    {
+        if (_wall is null || width <= 0 || height <= 0) return null;
+
+        var left = x - _wallLeft;
+        var top = y - _wallTop;
+
+        if (left < 0 || top < 0
+            || left + width > _wall.PixelWidth
+            || top + height > _wall.PixelHeight)
+        {
+            return null;
+        }
+
+        var piece = new CroppedBitmap(_wall, new Int32Rect(left, top, width, height));
+        piece.Freeze();
+        return piece;
     }
 
     /// <summary>
@@ -285,8 +348,20 @@ public partial class FloatShelfWindow : Window
             $"shelf: at {_spotLeft},{_spotTop} size={size.Width}x{size.Height} " +
             $"({DesignWidth:0}x{Height:0} at {scale:0.##}x), {_entries.Count} item(s)");
 
-        ShowWindow(handle, SW_HIDE);
-        var capture = ScreenCapture.Capture(_spotLeft, _spotTop, size.Width, size.Height);
+        // Cropped out of the picture taken when the shelf went up. Hiding the window to
+        // photograph the screen underneath is what made it blink every time a file
+        // landed on it, and there is nothing in that photograph this one does not
+        // already have.
+        var capture = CropWall(_spotLeft, _spotTop, size.Width, size.Height);
+
+        if (capture is null)
+        {
+            // Dragged onto another monitor, or the wall never got taken. Worth one
+            // blink to come back looking right.
+            Diagnostics.Log.Write("shelf: outside its backdrop, retaking it");
+            ShowWindow(handle, SW_HIDE);
+            capture = ScreenCapture.Capture(_spotLeft, _spotTop, size.Width, size.Height);
+        }
 
         Backdrop.Source = capture;
         Scrim.Background = GlassTint.For(capture);

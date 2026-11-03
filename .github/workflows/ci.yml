@@ -1,0 +1,56 @@
+# Build and run the self-test on every push.
+#
+# ffmpeg is fetched and put on PATH so the suite runs whole rather than skipping its
+# larger half. LibreOffice is not installed: it takes minutes to lay down on a runner for
+# a handful of cases, so the document conversions are covered by hand before a release.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache ffmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-bin
+          key: ffmpeg-n9.0-lgpl-shared
+
+      - name: Fetch ffmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $asset = 'ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip'
+          Invoke-WebRequest -UseBasicParsing `
+            -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$asset" `
+            -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-unpacked
+          $bin = (Get-ChildItem ffmpeg-unpacked -Directory -Recurse |
+                  Where-Object Name -eq 'bin' | Select-Object -First 1).FullName
+          New-Item -ItemType Directory -Force ffmpeg-bin | Out-Null
+          Copy-Item "$bin\*" ffmpeg-bin -Recurse
+
+      - name: Put ffmpeg on PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value (Resolve-Path ffmpeg-bin).Path
+
+      - name: Build
+        run: dotnet build Satsuma.sln -c Release
+
+      - name: Self-test
+        run: dotnet run --project tests/Satsuma.SelfTest -c Release

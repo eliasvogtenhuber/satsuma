@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Satsuma.App.Actions;
 using Satsuma.App.Diagnostics;
+using Satsuma.App.Hint;
 using Satsuma.App.Interop;
 using Satsuma.App.Progress;
 using Satsuma.App.Prompt;
@@ -11,6 +12,7 @@ using Satsuma.App.Tray;
 using Satsuma.App.Wheel;
 using Satsuma.Core.Engine;
 using Satsuma.Core.Model;
+using Satsuma.Core.Util;
 
 namespace Satsuma.App;
 
@@ -29,6 +31,7 @@ public partial class App : Application
     private DragWatcher? _watcher;
     private WheelWindow? _wheel;
     private FloatShelfWindow? _shelf;
+    private ModeHintWindow? _hint;
 
     /// <summary>Set while a drop is being turned into a job, so the wheel is not reopened.</summary>
     private DispatcherTimer? _closeAfterDrag;
@@ -140,6 +143,11 @@ public partial class App : Application
 
                 CloseWheel();
             };
+            // Space and Alt say where the results go. Shown live, because the whole
+            // point of holding a key is to know what it is doing while you hold it.
+            _watcher.ModifiersChanged += (_, _) =>
+                _wheel?.ShowDestination(AskedForDestination());
+
             _watcher.Cancelled += (_, _) => CloseWheel();
             _watcher.DragFinished += (_, _) =>
             {
@@ -343,8 +351,28 @@ public partial class App : Application
         if (_watcher is not null) _watcher.WheelOpen = false;
     }
 
+    /// <summary>
+    /// Where the user is asking for the results, judged by what is still held down.
+    ///
+    /// Read at the moment it matters rather than remembered, which is what makes a tap
+    /// useless: a key let go before the end of the gesture is simply not down when this
+    /// is asked. Alt wins a tie, since it is the more specific of the two.
+    /// </summary>
+    private Destination AskedForDestination()
+    {
+        if (_watcher is null) return Destination.Beside;
+        if (_watcher.AltHeld) return Destination.InPlace;
+        return _watcher.SpaceHeld ? Destination.NewFolder : Destination.Beside;
+    }
+
     private async void OnWheelChoice(object? sender, WheelChoice choice)
     {
+        // Sampled first, before anything can await and let the keys come up.
+        var destination = AskedForDestination();
+        var where = NativeMethods.GetCursorPos(out var cursor)
+            ? cursor
+            : new NativeMethods.POINT(0, 0);
+
         SetWheelClosed();
         _closeAfterDrag?.Stop();
 
@@ -352,6 +380,17 @@ public partial class App : Application
         {
             RunAction(choice);
             return;
+        }
+
+        // A slice that works on several files but was given one asks for the rest by
+        // letting them be clicked. Before the typed value, because which files there
+        // are can change what a typed value would mean.
+        if (choice.Item.Gathers && choice.Files.Count < 2)
+        {
+            var gathered = await GatherMoreAsync(choice.Files, where.X, where.Y);
+            if (gathered is null) return;   // changed their mind
+
+            choice = choice with { Files = gathered };
         }
 
         // A slice that needs a value asks for it now. The wheel is gone by this point,
@@ -369,7 +408,215 @@ public partial class App : Application
             choice = choice with { Item = choice.Item with { Options = options } };
         }
 
-        await RunJobAsync(choice);
+        string? folder = null;
+
+        // Space asked for somewhere else. Which somewhere else is still open: keep
+        // holding and click one, or let go and have one made.
+        if (destination == Destination.NewFolder)
+        {
+            var picked = await WaitForFolderAsync(where.X, where.Y);
+            if (picked is null) return;   // changed their mind
+
+            if (picked.Length > 0)
+            {
+                destination = Destination.ChosenFolder;
+                folder = picked;
+            }
+        }
+
+        Log.Write($"destination: {destination}{(folder is null ? "" : " -> " + folder)}");
+
+        await RunJobAsync(choice, destination, folder);
+    }
+
+    /// <summary>
+    /// Collects the other files, by letting the user click them where they are.
+    ///
+    /// Returns the whole list with the file the wheel was opened on still at the front,
+    /// or null if it was called off. Clicks are not swallowed: Explorer selecting what
+    /// was clicked is how Satsuma learns what it was, and it is also the only feedback
+    /// that a file has been taken.
+    /// </summary>
+    private Task<IReadOnlyList<SourceFile>?> GatherMoreAsync(
+        IReadOnlyList<SourceFile> starting, int screenX, int screenY)
+    {
+        if (_watcher is null) return Task.FromResult<IReadOnlyList<SourceFile>?>(null);
+
+        var watcher = _watcher;
+        var answered = new TaskCompletionSource<IReadOnlyList<SourceFile>?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var files = starting.ToList();
+        var seen = new HashSet<string>(
+            files.Select(file => file.Path), StringComparer.OrdinalIgnoreCase);
+
+        // Only more of the same kind. Merging a PDF with a spreadsheet is not a thing,
+        // and a stray click on the wrong file should cost nothing.
+        var wanted = files.Count > 0 ? files[0].Extension : string.Empty;
+
+        EventHandler<DragModifierEvent>? onClicked = null;
+        EventHandler? onConfirmed = null;
+        EventHandler? onCancelled = null;
+
+        void Finish(IReadOnlyList<SourceFile>? answer)
+        {
+            watcher.Waiting = false;
+            watcher.ClickedWhileWaiting -= onClicked;
+            watcher.ConfirmRequested -= onConfirmed;
+            watcher.Cancelled -= onCancelled;
+
+            _hint?.Dismiss();
+            answered.TrySetResult(answer);
+        }
+
+        onClicked = (_, click) =>
+        {
+            var window = click.SourceWindow;
+
+            Task.Run(async () =>
+            {
+                // Long enough for Explorer to turn the click into a selection.
+                await Task.Delay(140).ConfigureAwait(false);
+
+                var hit = await Core.Tools.StaExecutor
+                    .RunAsync(() => ShellSelection.FromWindow(window))
+                    .ConfigureAwait(false);
+
+                await Dispatcher.BeginInvoke(() =>
+                {
+                    if (watcher.Waiting == false) return;
+
+                    foreach (var file in hit)
+                    {
+                        if (file.IsDirectory) continue;
+                        if (!string.Equals(file.Extension, wanted, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (!seen.Add(file.Path)) continue;
+
+                        files.Add(file);
+                        Log.Write($"gathered {file.Name} ({files.Count})");
+                    }
+
+                    _hint?.ShowTally(files.Count - starting.Count, screenX, screenY);
+                });
+            });
+        };
+
+        onConfirmed = (_, _) =>
+            Finish(files.Count > starting.Count ? files : null);
+
+        onCancelled = (_, _) => Finish(null);
+
+        watcher.Waiting = true;
+        watcher.ClickedWhileWaiting += onClicked;
+        watcher.ConfirmRequested += onConfirmed;
+        watcher.Cancelled += onCancelled;
+
+        _hint ??= new ModeHintWindow();
+        _hint.ShowTally(0, screenX, screenY);
+
+        return answered.Task;
+    }
+
+    /// <summary>
+    /// Waits for the answer to "which folder", which is either one that gets clicked or
+    /// none at all.
+    ///
+    /// Returns the folder's path, an empty string for "make me one", or null if it was
+    /// called off. Space is already down when this starts -- that is what got us here --
+    /// so there is nothing to press, only something to let go of.
+    /// </summary>
+    private Task<string?> WaitForFolderAsync(int screenX, int screenY)
+    {
+        if (_watcher is null || !_watcher.SpaceHeld)
+        {
+            // Let go between the drop and here. That is the answer.
+            return Task.FromResult<string?>(string.Empty);
+        }
+
+        var watcher = _watcher;
+        var answered = new TaskCompletionSource<string?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        EventHandler? onReleased = null;
+        EventHandler<DragModifierEvent>? onClicked = null;
+        EventHandler? onCancelled = null;
+        DispatcherTimer? giveUp = null;
+
+        // A click takes a moment to become a selection, and Space can come up inside
+        // that moment. The click still wins: it happened first, and letting go after
+        // choosing is how anyone would end this gesture.
+        var resolving = 0;
+        var releasedWhileResolving = false;
+
+        void Finish(string? answer)
+        {
+            watcher.Waiting = false;
+            watcher.SpaceReleased -= onReleased;
+            watcher.ClickedWhileWaiting -= onClicked;
+            watcher.Cancelled -= onCancelled;
+
+            giveUp?.Stop();
+            _hint?.Dismiss();
+
+            answered.TrySetResult(answer);
+        }
+
+        onReleased = (_, _) =>
+        {
+            if (resolving > 0)
+            {
+                releasedWhileResolving = true;
+                return;
+            }
+
+            Finish(string.Empty);
+        };
+
+        onClicked = (_, click) =>
+        {
+            resolving++;
+            var window = click.SourceWindow;
+
+            Task.Run(async () =>
+            {
+                // Long enough for Explorer to turn the click into a selection.
+                await Task.Delay(140).ConfigureAwait(false);
+
+                var hit = await Core.Tools.StaExecutor
+                    .RunAsync(() => ShellSelection.FromWindow(window))
+                    .ConfigureAwait(false);
+
+                var picked = hit.FirstOrDefault(file => file.IsDirectory)?.Path;
+
+                await Dispatcher.BeginInvoke(() =>
+                {
+                    resolving--;
+
+                    // Clicking something that is not a folder is a miss, not an answer,
+                    // so the wait carries on and they can try again.
+                    if (picked is not null) Finish(picked);
+                    else if (releasedWhileResolving && resolving == 0) Finish(string.Empty);
+                });
+            });
+        };
+
+        onCancelled = (_, _) => Finish(null);
+
+        watcher.Waiting = true;
+        watcher.SpaceReleased += onReleased;
+        watcher.ClickedWhileWaiting += onClicked;
+        watcher.Cancelled += onCancelled;
+
+        // A key-up that never arrives -- an elevated window taking focus mid-gesture is
+        // enough -- would otherwise leave this waiting for good.
+        giveUp = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
+        giveUp.Tick += (_, _) => Finish(string.Empty);
+        giveUp.Start();
+
+        _hint ??= new ModeHintWindow();
+        _hint.ShowFor(Destination.NewFolder, screenX, screenY);
+
+        return answered.Task;
     }
 
     /// <summary>
@@ -430,7 +677,10 @@ public partial class App : Application
         }
     }
 
-    private async Task RunJobAsync(WheelChoice choice)
+    private async Task RunJobAsync(
+        WheelChoice choice,
+        Destination destination = Destination.Beside,
+        string? folder = null)
     {
         var card = new ProgressWindow();
         using var cancellation = new CancellationTokenSource();
@@ -450,7 +700,14 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            result = new BatchResult(Array.Empty<string>(), new[] { ex.Message });
+            result = BatchResult.Nothing(ex.Message);
+        }
+
+        // Handlers write beside the original; moving them is a separate, later step, so
+        // a cancelled or failed run never half-moves anything.
+        if (destination != Destination.Beside && result.AnySucceeded && !result.Cancelled)
+        {
+            result = await DeliverAsync(result, destination, choice.Item.Label, folder);
         }
 
         card.Complete(result, choice.Item.Label);
@@ -464,6 +721,29 @@ public partial class App : Application
                 if (group.Key.Length > 0) QuickActions.SelectInExplorer(group.Key, group.ToList());
             }
         }
+    }
+
+    /// <summary>
+    /// Moves finished results to wherever was asked for, off the UI thread.
+    ///
+    /// Anything that could not be moved is reported as a failure rather than swallowed:
+    /// a result that is not where the user asked for it is not a result they have found.
+    /// </summary>
+    private static async Task<BatchResult> DeliverAsync(
+        BatchResult result, Destination destination, string label, string? folder)
+    {
+        var produced = result.Produced;
+
+        var delivered = await Task.Run(
+            () => Delivery.Deliver(destination, produced, label, folder));
+
+        foreach (var problem in delivered.Problems) Log.Write($"delivery: {problem}");
+
+        return result with
+        {
+            Produced = delivered.Produced,
+            Failures = result.Failures.Concat(delivered.Problems).ToList()
+        };
     }
 
     private void ShowShelf(IReadOnlyList<SourceFile>? files = null)

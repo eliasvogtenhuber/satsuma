@@ -1,0 +1,74 @@
+# Cuts a release from a tag: build\publish.ps1 does the work, this only carries the
+# result to GitHub. Tag v0.1.0 produces Satsuma-0.1.0-win-x64.zip.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The zip is the whole app: self-contained .NET and a bundled ffmpeg, so unzipping it is
+# the entire install.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the leading v'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $version = '${{ github.event.inputs.version }}'
+          }
+          else {
+            $version = '${{ github.ref_name }}' -replace '^v', ''
+          }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+          Write-Host "Building $version"
+
+      - name: Build the release folder
+        shell: pwsh
+        run: ./build/publish.ps1 -Version ${{ steps.version.outputs.version }}
+
+      # Smoke test: the exe has to at least start and quit on a machine that never had
+      # the .NET runtime installed, which is the whole point of self-contained.
+      - name: Check it starts
+        shell: pwsh
+        run: |
+          $exe = "artifacts/Satsuma-${{ steps.version.outputs.version }}-win-x64/Satsuma.exe"
+          if (-not (Test-Path $exe)) { throw "No exe at $exe." }
+          $app = Start-Process $exe -PassThru
+          Start-Sleep -Seconds 10
+          if ($app.HasExited) { throw "Satsuma exited on its own with $($app.ExitCode)." }
+          Stop-Process -Id $app.Id -Force
+          Write-Host 'Started and stayed up.'
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $zip = "artifacts/Satsuma-$version-win-x64.zip"
+          gh release create "v$version" $zip `
+            --title "Satsuma $version" `
+            --generate-notes `
+            --notes "Unzip anywhere and run Satsuma.exe. Nothing to install: the .NET runtime and ffmpeg are both in the folder. LibreOffice is still a separate install, and only documents, spreadsheets and slides need it."

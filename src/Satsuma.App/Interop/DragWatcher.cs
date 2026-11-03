@@ -69,6 +69,18 @@ public sealed class DragWatcher : IDisposable
     /// <summary>A wheel waiting for a click to say which file, or null.</summary>
     private WheelKind? _armedKind;
 
+    /// <summary>
+    /// Space and Alt, which say where the results should go rather than what to do.
+    ///
+    /// These are not bound keys and never open anything. They are read as state: what
+    /// matters is whether they are still down at the end of the gesture, which is why a
+    /// tap cannot trigger them. Nothing here latches, because unlike the wheel keys they
+    /// are supposed to survive the gesture they were held through.
+    /// </summary>
+    private bool _spaceDown;
+
+    private bool _altDown;
+
     private bool _buttonDown;
     private bool _dragging;
     private POINT _origin;
@@ -92,6 +104,16 @@ public sealed class DragWatcher : IDisposable
     /// <summary>The button went down somewhere while a wheel was already on screen.</summary>
     public event EventHandler<DragModifierEvent>? ClickedWhileOpen;
 
+    /// <summary>
+    /// Something was clicked while Satsuma was waiting to be told where, or which. The
+    /// click is let through, because Explorer selecting what was clicked is how Satsuma
+    /// finds out what it was.
+    /// </summary>
+    public event EventHandler<DragModifierEvent>? ClickedWhileWaiting;
+
+    /// <summary>Enter, while Satsuma was waiting: that is enough files.</summary>
+    public event EventHandler? ConfirmRequested;
+
     public DragWatcher(AppSettings settings, Dispatcher dispatcher)
     {
         _dispatcher = dispatcher;
@@ -108,6 +130,26 @@ public sealed class DragWatcher : IDisposable
 
     /// <summary>True while a wheel is on screen, which suppresses re-triggering.</summary>
     public bool WheelOpen { get; set; }
+
+    /// <summary>
+    /// True while the gesture is over but Satsuma is still waiting on the user: holding
+    /// Space to choose a folder, or clicking the files for a merge. Space keeps being
+    /// swallowed through this, since Explorer would otherwise use it to toggle whatever
+    /// is selected under the pointer.
+    /// </summary>
+    public bool Waiting { get; set; }
+
+    /// <summary>Space is down right now.</summary>
+    public bool SpaceHeld => _spaceDown;
+
+    /// <summary>Alt is down right now.</summary>
+    public bool AltHeld => _altDown;
+
+    /// <summary>Space or Alt went down or came up.</summary>
+    public event EventHandler? ModifiersChanged;
+
+    /// <summary>Space came up. Letting go is the answer to "where?", so it is an event.</summary>
+    public event EventHandler? SpaceReleased;
 
     public void Start()
     {
@@ -162,6 +204,22 @@ public sealed class DragWatcher : IDisposable
                     _origin = data.pt;
                     _buttonDown = true;
                     _dragging = false;
+
+                    // Waiting to be told where results go, or which files to take. The
+                    // click answers that and is let through so Explorer selects what was
+                    // clicked, which is where the answer is read from.
+                    if (Waiting)
+                    {
+                        var where = data.pt;
+                        var window = GetAncestor(WindowFromPoint(where), GA_ROOT);
+
+                        Log.Write($"click while waiting at {where.X},{where.Y}");
+                        Post(() => ClickedWhileWaiting?.Invoke(this,
+                            new DragModifierEvent(WheelKind.Formats,
+                                where.X, where.Y, where.X, where.Y)
+                            { SourceWindow = window }));
+                        break;
+                    }
 
                     // A bound key held before the click, rather than pressed during a
                     // drag, means the other way round: click a file to open the wheel and
@@ -248,11 +306,47 @@ public sealed class DragWatcher : IDisposable
 
                 if (key == VK_ESCAPE)
                 {
-                    if (WheelOpen)
+                    if (WheelOpen || Waiting)
                     {
                         Post(() => Cancelled?.Invoke(this, EventArgs.Empty));
                         return Swallow;   // the drag source must not also see the Escape
                     }
+                }
+                else if (key == VK_RETURN && Waiting)
+                {
+                    // The way out of a gathering. Swallowed, or Explorer opens whatever
+                    // the user just finished clicking.
+                    Post(() => ConfirmRequested?.Invoke(this, EventArgs.Empty));
+                    return Swallow;
+                }
+                else if (IsAlt(key))
+                {
+                    // Observed, never swallowed. Alt is load-bearing everywhere else in
+                    // Windows, and a tray app that eats it breaks Alt-Tab and every menu
+                    // on the machine for the sake of a hint Satsuma could do without.
+                    if (!_altDown)
+                    {
+                        _altDown = true;
+                        Log.Write("alt down");
+                        Post(() => ModifiersChanged?.Invoke(this, EventArgs.Empty));
+                    }
+                }
+                else if (key == VK_SPACE)
+                {
+                    var newlyDown = !_spaceDown;
+                    _spaceDown = true;
+
+                    if (newlyDown)
+                    {
+                        Log.Write($"space down, dragging={_dragging} wheel={WheelOpen}");
+                        Post(() => ModifiersChanged?.Invoke(this, EventArgs.Empty));
+                    }
+
+                    // Swallowed only while Satsuma is the one who cares about it. Held
+                    // space repeats, and in Explorer each repeat toggles whatever has
+                    // focus, so the folder the user is about to click would be fighting
+                    // the key they are holding to choose it with.
+                    if (_dragging || WheelOpen || Waiting) return Swallow;
                 }
                 else if (_keyMap.TryGetValue(key, out var wheel))
                 {
@@ -337,6 +431,33 @@ public sealed class DragWatcher : IDisposable
                 var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
                 var key = (int)data.vkCode;
 
+                if (IsAlt(key) && _altDown)
+                {
+                    _altDown = false;
+                    Log.Write("alt up");
+                    Post(() => ModifiersChanged?.Invoke(this, EventArgs.Empty));
+                }
+
+                if (key == VK_SPACE)
+                {
+                    var wasDown = _spaceDown;
+                    _spaceDown = false;
+
+                    if (wasDown)
+                    {
+                        Log.Write("space up");
+                        Post(() =>
+                        {
+                            ModifiersChanged?.Invoke(this, EventArgs.Empty);
+                            SpaceReleased?.Invoke(this, EventArgs.Empty);
+                        });
+                    }
+
+                    // Matched to the swallowed press, or whatever has focus sees a
+                    // release it never saw the press for.
+                    if (wasDown && (_dragging || WheelOpen || Waiting)) return Swallow;
+                }
+
                 // The only thing that unlatches a key. Letting go is the whole gesture.
                 var wasHeld = _latched.Remove(key);
                 if (wasHeld) Log.Write($"key 0x{key:X2} released");
@@ -357,6 +478,12 @@ public sealed class DragWatcher : IDisposable
 
     /// <summary>Returning non-zero from a hook stops the key reaching anything else.</summary>
     private static readonly IntPtr Swallow = new(1);
+
+    /// <summary>
+    /// The hook reports the physical Alt key, left or right; VK_MENU turns up when the
+    /// press was synthesised rather than typed.
+    /// </summary>
+    private static bool IsAlt(int key) => key is VK_MENU or VK_LMENU or VK_RMENU;
 
     /// <summary>
     /// Forgets latched keys that have gone quiet for long enough to have been let go.

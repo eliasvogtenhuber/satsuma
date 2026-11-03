@@ -62,6 +62,23 @@ public static class OutputNaming
         return Path.Combine(parent, $"{stem} ({Guid.NewGuid():N})");
     }
 
+    /// <summary>A free directory path inside a parent you choose.</summary>
+    public static string NextDirectoryIn(string parent, string name)
+    {
+        var stem = Sanitize(name);
+
+        var candidate = Path.Combine(parent, stem);
+        if (!Exists(candidate)) return candidate;
+
+        for (var counter = 2; counter < 10_000; counter++)
+        {
+            candidate = Path.Combine(parent, $"{stem} ({counter})");
+            if (!Exists(candidate)) return candidate;
+        }
+
+        return Path.Combine(parent, $"{stem} ({Guid.NewGuid():N})");
+    }
+
     /// <summary>
     /// A name for a result built from several inputs, e.g. a merge or a join.
     /// Lands next to the first input.

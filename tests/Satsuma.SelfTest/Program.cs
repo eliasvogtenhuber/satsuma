@@ -4,6 +4,7 @@ using Satsuma.Core.Catalog;
 using Satsuma.Core.Engine;
 using Satsuma.Core.Model;
 using Satsuma.Core.Tools;
+using Satsuma.Core.Util;
 
 namespace Satsuma.SelfTest;
 
@@ -46,6 +47,7 @@ internal static class Program
             await TestOffice(workspace);
             await TestSubtitles(workspace);
             await TestArchives(workspace);
+            TestDelivery(workspace);
 
             if (FfmpegLocator.IsAvailable)
             {
@@ -435,6 +437,23 @@ internal static class Program
                 Describe(merged));
         }
 
+        // Merge is offered for one PDF, because that is where people start: the wheel
+        // collects the rest by letting them be clicked afterwards.
+        var single = new[] { new SourceFile(pdf) };
+        var forOne = Runner.BuildWheel(WheelKind.Tools, FileCategory.Pdf, single);
+        var mergeSlice = forOne.FirstOrDefault(item => item.Id == "tool.pdf.merge");
+
+        Check("merge is offered for a single PDF", mergeSlice is not null, "on the wheel");
+        Check("and says it will ask for the rest", mergeSlice?.Gathers == true,
+            mergeSlice?.Hint ?? "missing");
+
+        // If the gathering is called off, the run must not quietly produce a copy.
+        var alone = await Run(Leaf(tools, "tool.pdf.merge"), single, FileCategory.Pdf);
+
+        Check("merging one PDF refuses rather than copying it",
+            alone.Outputs.Count == 0 && alone.Failures.Count == 1,
+            alone.Failures.Count > 0 ? alone.Failures[0] : Describe(alone));
+
         await TestSplitting(workspace, pdf, tools);
 
         // Keeping a range, which is what people usually mean by splitting a PDF.
@@ -467,10 +486,9 @@ internal static class Program
             && noSuchPage.Failures[0].Contains("No pages matched"),
             noSuchPage.Failures.Count > 0 ? noSuchPage.Failures[0] : "wrote a file anyway");
 
-        // Merge needs more than one file to mean anything.
-        var singleMerge = new JobRequest(
-            Leaf(tools, "tool.pdf.merge"), new[] { new SourceFile(pdf) }, FileCategory.Pdf);
-        Check("merge hidden for one file", !Runner.CanHandle(singleMerge), "slice hidden");
+        // Merge used to be hidden for one file. It is offered now and collects the rest
+        // afterwards, which the checks above cover: it appears, it says it will ask, and
+        // it still refuses to run on one.
 
         // Compression needs a PDF worth compressing: a page carrying far more pixels than
         // its paper size needs, which is the shape of the scans people want to shrink.
@@ -1462,6 +1480,137 @@ internal static class Program
     };
 
     private static string Kb(long bytes) => $"{bytes / 1024.0:0.#} KB";
+
+    /// <summary>
+    /// Where results end up once a held key has asked for somewhere other than "beside".
+    ///
+    /// Run against real files rather than a fake file system, because the one step here
+    /// that cannot be undone -- sending an original to the Recycle Bin -- is exactly the
+    /// step a fake would not exercise. The handful of files this bins are named for what
+    /// they are and are a few bytes each.
+    /// </summary>
+    private static void TestDelivery(string workspace)
+    {
+        Section("Delivering results");
+
+        var home = Path.Combine(workspace, "delivery");
+        Directory.CreateDirectory(home);
+
+        string Make(string name, string content = "x")
+        {
+            var path = Path.Combine(home, "satsuma-selftest-" + name);
+            File.WriteAllText(path, content);
+            return path;
+        }
+
+        static ProducedFile[] One(string path, string? source = null) =>
+            new[] { new ProducedFile(path, source) };
+
+        Check("the Recycle Bin covers a normal drive", RecycleBin.Covers(home), home[..2]);
+        Check("and not a network path", !RecycleBin.Covers(@"\\server\share\file.txt"),
+            "UNC");
+
+        var still = Make("beside.txt");
+        var untouched = Delivery.Deliver(Destination.Beside, One(still), "Convert");
+
+        Check("beside leaves results where they are",
+            untouched.Produced[0].Path == still && File.Exists(still), "not moved");
+
+        // A new folder, named for the action rather than the file, since one action can
+        // have produced results from several files.
+        var first = Make("fold-one.txt");
+        var second = Make("fold-two.txt");
+
+        var folded = Delivery.Deliver(Destination.NewFolder,
+            new[] { new ProducedFile(first), new ProducedFile(second) }, "To PNG");
+
+        var landed = folded.Produced
+            .Select(file => Path.GetDirectoryName(file.Path) ?? string.Empty)
+            .Distinct()
+            .ToList();
+
+        Check("a new folder takes them all",
+            folded.Problems.Count == 0
+            && landed.Count == 1
+            && Path.GetFileName(landed[0]) == "To PNG"
+            && folded.Produced.All(file => File.Exists(file.Path))
+            && !File.Exists(first),
+            landed.Count == 1 ? Path.GetFileName(landed[0]) + "/" : $"{landed.Count} folders");
+
+        var third = Make("fold-three.txt");
+        var again = Delivery.Deliver(Destination.NewFolder, One(third), "To PNG");
+
+        Check("a second run stands beside the first, not inside it",
+            Path.GetFileName(Path.GetDirectoryName(again.Produced[0].Path)) == "To PNG (2)",
+            Path.GetFileName(Path.GetDirectoryName(again.Produced[0].Path)) ?? "?");
+
+        var chosen = Path.Combine(home, "somewhere else");
+        var fourth = Make("chosen.txt");
+        var moved = Delivery.Deliver(Destination.ChosenFolder, One(fourth), "Compress", chosen);
+
+        Check("a chosen folder takes them",
+            moved.Problems.Count == 0
+            && Path.GetDirectoryName(moved.Produced[0].Path) == chosen
+            && File.Exists(moved.Produced[0].Path)
+            && !File.Exists(fourth),
+            "somewhere else/");
+
+        // In place, where the extension changes: the result takes the original's name.
+        var original = Make("replace-me.txt", "before");
+        var replacement = Make("replace-me-out.md", "after");
+
+        var replaced = Delivery.Deliver(
+            Destination.InPlace, One(replacement, original), "To Markdown");
+
+        var expected = Path.Combine(home, "satsuma-selftest-replace-me.md");
+
+        Check("in place puts the result where the original was",
+            replaced.Problems.Count == 0
+            && replaced.Produced.Count == 1
+            && replaced.Produced[0].Path == expected
+            && File.ReadAllText(expected) == "after",
+            Path.GetFileName(replaced.Produced[0].Path));
+
+        Check("in place takes the original away",
+            !File.Exists(original), "binned");
+
+        // In place, same extension: a real overwrite, and the original still goes to the
+        // bin rather than being written over, so it can come back.
+        var overwritten = Make("overwrite-me.txt", "old");
+        var fresher = Make("overwrite-me-out.txt", "new");
+
+        var overTheTop = Delivery.Deliver(
+            Destination.InPlace, One(fresher, overwritten), "Compress");
+
+        Check("in place with the same extension keeps the name",
+            overTheTop.Produced.Count == 1
+            && overTheTop.Produced[0].Path == overwritten
+            && File.ReadAllText(overwritten) == "new",
+            Path.GetFileName(overwritten));
+
+        // One original, several results: nothing to rename onto, but the original was
+        // still asked to go.
+        var cut = Make("split-me.pdf", "pages");
+        var pieceA = Make("split-me-p1.pdf", "a");
+        var pieceB = Make("split-me-p2.pdf", "b");
+
+        var pieces = Delivery.Deliver(Destination.InPlace,
+            new[] { new ProducedFile(pieceA, cut), new ProducedFile(pieceB, cut) }, "Split");
+
+        Check("several results leave the original gone and the pieces in place",
+            !File.Exists(cut)
+            && pieces.Produced.Count == 2
+            && pieces.Produced.All(file => File.Exists(file.Path)),
+            "2 pieces kept");
+
+        // A merge has no single original, so in place has nothing to act on.
+        var orphan = Make("merged.pdf");
+        var kept = Delivery.Deliver(Destination.InPlace, One(orphan), "Merge");
+
+        Check("a result with no original is left alone",
+            kept.Produced.Count == 1 && kept.Produced[0].Path == orphan && File.Exists(orphan),
+            "nothing to replace");
+    }
 
     private static void Section(string name)
     {

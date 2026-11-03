@@ -788,6 +788,21 @@ public partial class WheelWindow : Window
         return stack;
     }
 
+    /// <summary>
+    /// Shows where the results are headed, while a key is saying so.
+    ///
+    /// Live rather than sampled: the mark appears the moment the key goes down and
+    /// leaves the moment it comes up, so what is on screen is always what would happen
+    /// if the file were dropped now.
+    /// </summary>
+    public void ShowDestination(Destination destination)
+    {
+        var glyph = ModeGlyphs.For(destination);
+
+        ModeGlyph.Data = glyph;
+        ModeGlyph.Visibility = glyph is null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
     private void UpdateHub()
     {
         if (_hoverIndex >= 0 && _hoverIndex < _items.Count)

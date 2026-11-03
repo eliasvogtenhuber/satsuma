@@ -56,10 +56,44 @@ public sealed record WheelItem(
     /// </summary>
     public InputRequest? Input { get; init; }
 
+    /// <summary>
+    /// True for a slice that needs more files than it was given, and asks for them by
+    /// letting the user click them where they are.
+    ///
+    /// Merging one PDF is not a thing you can do, but it is exactly where someone starts:
+    /// they are looking at the first file, not at a selection. So the slice is offered
+    /// for a single file and collects the rest afterwards, with the one it started from
+    /// at the front.
+    /// </summary>
+    public bool Gathers { get; init; }
+
     /// <summary>The option a typed answer fills in.</summary>
     public const string CustomOption = "custom";
 
     public bool HasChildren => Children.Count > 0;
+}
+
+/// <summary>
+/// Where a job's results should end up.
+///
+/// Satsuma's default has always been "beside the original", which is the answer that
+/// needs no thought and can't lose anything. The others are asked for by holding a key
+/// through to the end of the gesture, so they cost a deliberate act: Space for somewhere
+/// else, Alt for over the top.
+/// </summary>
+public enum Destination
+{
+    /// <summary>Beside the original, where every result has gone until now.</summary>
+    Beside,
+
+    /// <summary>In a new folder made for them.</summary>
+    NewFolder,
+
+    /// <summary>In a folder the user picked by clicking it.</summary>
+    ChosenFolder,
+
+    /// <summary>Over the original, which goes to the Recycle Bin first.</summary>
+    InPlace
 }
 
 /// <summary>A single file the user dragged.</summary>
@@ -89,6 +123,16 @@ public sealed record JobResult(
     public static JobResult Fail(string message) => new(JobStatus.Failed, Array.Empty<string>(), message);
     public static JobResult Skip(string message) => new(JobStatus.Skipped, Array.Empty<string>(), message);
 }
+
+/// <summary>
+/// One file a job wrote, and the file it was made from.
+///
+/// The source is what lets a result be delivered somewhere other than where the handler
+/// put it. Replacing an original needs to know which original, and no handler reports
+/// that, because until now nothing ever asked. It is null for results built from several
+/// inputs at once, like a merge, where there is no single original to go back to.
+/// </summary>
+public sealed record ProducedFile(string Path, string? SourcePath = null);
 
 /// <summary>Progress for the small window that appears while work runs.</summary>
 public sealed record JobProgress(string Title, double Fraction, string? Detail = null);

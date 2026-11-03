@@ -19,7 +19,8 @@ public sealed class PdfToolHandler : IJobHandler
 
         return Operation(request.Item.Id) switch
         {
-            "merge" => request.Files.Count > 1,
+            // One file is enough to offer it: the wheel asks for the rest afterwards.
+            "merge" => request.Files.Count >= 1,
             "split" or "compress" or "pages" => true,
             _ => false
         };
@@ -45,12 +46,17 @@ public sealed class PdfToolHandler : IJobHandler
         JobRequest request, IProgress<double>? progress, CancellationToken cancellationToken)
     {
         var paths = request.Files.Select(f => f.Path).ToList();
+
+        // Reachable when the gathering was called off, or when a handler is driven
+        // directly. Merging one file would quietly produce a copy under a new name.
+        if (paths.Count < 2) return JobResult.Fail("Merging needs more than one PDF.");
+
         var target = OutputNaming.ForGroup(paths, ".pdf", "merged");
 
         await Task.Run(() =>
         {
-            // Order matters and is the order they were selected in, which is the order
-            // Explorer reports them.
+            // Order matters, and the order is the caller's: the file the wheel was
+            // opened on, then the rest as they were clicked.
             var merged = PdfMerger.Merge(paths.ToArray());
             File.WriteAllBytes(target, merged);
         }, cancellationToken).ConfigureAwait(false);

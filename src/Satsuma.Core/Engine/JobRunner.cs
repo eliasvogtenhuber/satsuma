@@ -6,12 +6,25 @@ namespace Satsuma.Core.Engine;
 
 /// <summary>Outcome of running a whole wheel pick over a whole selection.</summary>
 public sealed record BatchResult(
-    IReadOnlyList<string> Outputs,
+    IReadOnlyList<ProducedFile> Produced,
     IReadOnlyList<string> Failures,
     bool Cancelled = false)
 {
-    public bool AnySucceeded => Outputs.Count > 0;
+    /// <summary>
+    /// Just the paths, for everything that does not care where they came from.
+    ///
+    /// Worked out on each read rather than stored. A record's copy constructor copies
+    /// backing fields without re-running their initialisers, so a stored version would
+    /// survive a <c>with</c> that replaced <see cref="Produced"/> and quietly report the
+    /// paths from before the results were moved.
+    /// </summary>
+    public IReadOnlyList<string> Outputs => Produced.Select(file => file.Path).ToArray();
+
+    public bool AnySucceeded => Produced.Count > 0;
     public bool AllSucceeded => Failures.Count == 0 && !Cancelled;
+
+    public static BatchResult Nothing(params string[] failures) =>
+        new(Array.Empty<ProducedFile>(), failures);
 }
 
 /// <summary>
@@ -97,13 +110,11 @@ public sealed class JobRunner
         var handler = Find(request);
         if (handler is null)
         {
-            return new BatchResult(
-                Array.Empty<string>(),
-                new[] { $"Nothing here can do {request.Item.Label}." });
+            return BatchResult.Nothing($"Nothing here can do {request.Item.Label}.");
         }
 
         var title = request.Item.Label;
-        var outputs = new List<string>();
+        var outputs = new List<ProducedFile>();
         var failures = new List<string>();
 
         try
@@ -117,7 +128,8 @@ public sealed class JobRunner
                     .ExecuteAsync(request, inner, cancellationToken)
                     .ConfigureAwait(false);
 
-                Collect(result, outputs, failures, request.Files.Count == 1 ? request.Files[0].Name : null);
+                Collect(result, outputs, failures,
+                    request.Files.Count == 1 ? request.Files[0] : null);
             }
             else
             {
@@ -149,7 +161,7 @@ public sealed class JobRunner
                             .ExecuteAsync(single, inner, cancellationToken)
                             .ConfigureAwait(false);
 
-                        Collect(result, outputs, failures, file.Name);
+                        Collect(result, outputs, failures, file);
                     }
                     catch (OperationCanceledException)
                     {
@@ -176,12 +188,15 @@ public sealed class JobRunner
     }
 
     private static void Collect(
-        JobResult result, List<string> outputs, List<string> failures, string? label)
+        JobResult result, List<ProducedFile> outputs, List<string> failures, SourceFile? source)
     {
+        var label = source?.Name;
+
         switch (result.Status)
         {
             case JobStatus.Succeeded:
-                outputs.AddRange(result.OutputPaths);
+                outputs.AddRange(result.OutputPaths
+                    .Select(path => new ProducedFile(path, source?.Path)));
                 break;
             case JobStatus.Failed:
             case JobStatus.Skipped:

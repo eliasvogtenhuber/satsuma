@@ -80,6 +80,18 @@
                 <StackPanel.Effect>
                     <DropShadowEffect BlurRadius="5" ShadowDepth="0" Opacity="0.85" Color="Black" />
                 </StackPanel.Effect>
+                <!-- Where the results will go, when a held key has changed the answer.
+                     A badge above the action rather than a line of text beside it: the
+                     hub has two lines of its own already, and the thing being said here
+                     is one bit wide. -->
+                <Path x:Name="ModeGlyph"
+                      Stroke="#EDEDED" StrokeThickness="1.4"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                      StrokeLineJoin="Round"
+                      HorizontalAlignment="Center"
+                      Margin="0,0,0,4"
+                      Visibility="Collapsed" />
+
                 <TextBlock x:Name="HubPrimary"
                            Text="Satsuma"
                            FontSize="13"

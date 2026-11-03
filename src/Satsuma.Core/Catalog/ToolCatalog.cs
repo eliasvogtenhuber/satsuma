@@ -134,7 +134,11 @@ public static class ToolCatalog
         FileCategory.Pdf => new[]
         {
             Tool("tool.pdf.compress", "Compress", children: QualityPresets("tool.pdf.compress")),
-            Tool("tool.pdf.merge", "Merge", "All PDFs into one"),
+            // Offered for a single PDF too, where it means "and the ones I am about to
+            // click". The one it was started from leads, since that is the one the user
+            // had in hand when they decided to merge.
+            new WheelItem("tool.pdf.merge", "Merge", WheelKind.Tools,
+                Hint: "This one, then the ones you click") { Gathers = true },
 
             // Split asks where, rather than assuming one file per page. On a contract or
             // a couple of scans that assumption is fine; on a 300-page report it empties

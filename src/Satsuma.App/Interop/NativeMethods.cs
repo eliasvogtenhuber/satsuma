@@ -62,6 +62,8 @@ internal static class NativeMethods
     internal const int VK_SHIFT = 0x10;
     internal const int VK_CONTROL = 0x11;
     internal const int VK_MENU = 0x12;       // Alt
+    internal const int VK_RETURN = 0x0D;
+    internal const int VK_SPACE = 0x20;
     internal const int VK_ESCAPE = 0x1B;
     internal const int VK_LSHIFT = 0xA0;
     internal const int VK_RSHIFT = 0xA1;
@@ -85,6 +87,7 @@ internal static class NativeMethods
     internal const int GWL_EXSTYLE = -20;
     internal const int WS_EX_NOACTIVATE = 0x08000000;
     internal const int WS_EX_TOOLWINDOW = 0x00000080;
+    internal const int WS_EX_TRANSPARENT = 0x00000020;
     internal const int WS_EX_TOPMOST = 0x00000008;
     internal const int WS_EX_LAYERED = 0x00080000;
 

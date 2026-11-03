@@ -6,7 +6,7 @@ Start dragging a file in File Explorer or on the Desktop, press **1**, and a whe
 output formats appears under the pointer. Lean toward one, let go, and a converted copy
 lands next to the original. No window, no upload, no app to open.
 
-Satsuma is a Windows take on [Tangerine](https://tangerine.pet) for macOS by Thameem
+Satsuma is a Windows take on [Tangerine](https://tangerineformac.com/) for macOS by Thameem
 (Leap Studio). This is an independent reimplementation, not a port — none of Tangerine's
 code is here, and the two differ wherever Windows does.
 
@@ -14,10 +14,14 @@ code is here, and the two differ wherever Windows does.
 
 ## Status
 
-Working and usable, but early. Images, video, audio, subtitles and archives convert today.
-PDF works both ways: pages out as images or text, and images in. Office formats are
-catalogued but not implemented, so they do not appear on the wheel — see
-[Roadmap](#roadmap).
+Working and usable, but early. Images, video, audio, subtitles and archives convert today,
+and so do documents, spreadsheets and slides where LibreOffice is installed. PDF works
+both ways: pages out as images or text, and images in.
+
+A few conversions are in the catalogue but have no handler behind them, so they are
+filtered off the wheel rather than failing after the drop: PDF to DOCX, PPTX, XLSX and
+EPUB, Markdown out of documents, and HEIC output. Each is a deliberate stopping point —
+see [Roadmap](#roadmap) and [limitations](docs/limitations.md).
 
 ## How it works
 
@@ -47,16 +51,40 @@ Then:
   for a second wheel.
 
 **Clicking.** Select a file in Explorer and press the number key, or hold the key and
-then click a file. The wheel opens where you
-clicked and stays there, so you can let go of everything and take your time. The wheel opens where you are and stays there, so you can let go of everything and take
-your time. Click a slice to pick it, press 1, 2 or 3 to switch between the wheels, click
-the centre to go back out of a preset ring, and click away or press Esc to put it away.
+then click a file. The wheel opens where you are and stays there, so you can let go of
+everything and take your time. Click a slice to pick it, press 1, 2 or 3 to switch
+between the wheels, click the centre to go back out of a preset ring, and click away or
+press Esc to put it away.
 
 This only arms over Explorer and the Desktop. Everywhere else a number key belongs to
 whatever you are typing into.
 
-Results are always new files written beside the original. Satsuma never overwrites or
-moves what you dragged.
+### Where the results go
+
+Beside the original, unless you say otherwise. Saying otherwise means holding a key
+*through the end of the gesture* — it has to still be down when you let go of the mouse,
+so a tap on the way past does nothing. A small mark appears on the hub while you hold it,
+so you can see which one you are in before you drop.
+
+- **Space** — somewhere else. Let go once you have dropped and Satsuma makes a folder,
+  named for what it did. Keep holding and click a folder instead, and they go there.
+  Clicking something that is not a folder is a miss, not an answer, so try again.
+- **Alt** — over the original. The original goes to the Recycle Bin and the result takes
+  its name. Where a delete would not reach the bin, like a network share, the original is
+  kept and Satsuma says so instead of destroying it quietly.
+
+One original that produced several files — a split — cannot have them all take its name.
+The original still goes, and the pieces stay where they were written.
+
+### Merge
+
+Merge is on the Tools wheel for a single PDF, because one PDF is where you start: you are
+looking at the first one, not at a selection.
+
+Pick it and the wheel goes away, leaving a count beside the pointer. Click the other PDFs
+in Explorer — one at a time, or several at once — and press **Enter** when you have them
+all. They are merged in the order you clicked them, with the one you started from first.
+**Esc** calls it off.
 
 ### Why number keys and not Shift, Ctrl and Alt
 
@@ -120,38 +148,64 @@ supported: nothing shippable can write it. Compressing a HEIC gives you a JPG.
 
 ## Installing
 
-Satsuma needs **Windows 10 1809 or later**, x64.
+Satsuma needs **Windows 10 1809 or later**, x64. Download the latest zip from
+[Releases](https://github.com/YOUR-NAME/satsuma/releases), unzip it anywhere, and run
+`Satsuma.exe`.
+
+That is the whole install. The .NET runtime is in the folder, because Windows does not
+ship one, and so is ffmpeg, because almost everything in video and audio needs it. The
+download is about 135MB and unpacks to around 320MB.
+
+Satsuma starts in the tray; right-click the tray icon for the menu, and tick **Start with
+Windows** if you want it there permanently.
+
+Windows will warn you the first time: the exe is not code-signed, because a certificate
+costs more per year than this project is worth. **More info → Run anyway**, or check the
+hash against the release if you would rather not take that on faith.
+
+### Building it yourself
+
+With the .NET 8 SDK:
 
 ```bash
 git clone https://github.com/YOUR-NAME/satsuma.git
 ```
 
-Build it with the .NET 8 SDK:
-
 ```bash
 dotnet build Satsuma.sln -c Release
 ```
 
-The app is `src/Satsuma.App/bin/x64/Release/net8.0-windows/Satsuma.exe`. It starts in the
-tray; right-click the tray icon for the menu, and tick **Start with Windows** if you want
-it there permanently.
+The app lands in `src/Satsuma.App/bin/x64/Release/net8.0-windows/`. To build the shipping
+folder instead — self-contained, with ffmpeg fetched and bundled:
+
+```bash
+pwsh build/publish.ps1
+```
 
 ### ffmpeg
 
-Images that Windows can read and write need nothing. Video, audio, WebP and AVIF need
-ffmpeg:
+Images that Windows can read and write need nothing. Video, audio, WebP, AVIF and the
+subtitle conversions need ffmpeg, which **the release already includes** in `tools\` next
+to the exe.
+
+A build from source does not. Either run `build/publish.ps1`, which fetches it, or install
+one:
 
 ```bash
 winget install BtbN.FFmpeg.GPL
 ```
 
-Satsuma finds it on `PATH`, in a `tools\` folder next to the exe, or in the usual winget
-install location. Restart Satsuma afterwards. Until it is there, those slices simply do
-not appear.
+Satsuma looks in `tools\` next to the exe first, then in
+`%LOCALAPPDATA%\Satsuma\tools`, then on `PATH`, then in the usual winget install
+locations. The bundled copy wins on purpose: the version shipped is the version tested.
+Restart Satsuma after installing one. Until it is there, those slices simply do not
+appear.
 
 ### LibreOffice
 
-Documents, spreadsheets and slides go through LibreOffice:
+Documents, spreadsheets and slides go through LibreOffice, which is the one dependency
+**not** bundled: it is around 700MB, which would be three quarters of the download for
+the one thing it alone can do.
 
 ```bash
 winget install TheDocumentFoundation.LibreOffice
@@ -282,7 +336,7 @@ anywhere else work.
 
 ## Credits
 
-Inspired by [Tangerine](https://tangerine.pet) by Thameem / Leap Studio. If you are on a
+Inspired by [Tangerine](https://tangerineformac.com/) by Thameem / Leap Studio. If you are on a
 Mac, buy theirs.
 
 ## Licence

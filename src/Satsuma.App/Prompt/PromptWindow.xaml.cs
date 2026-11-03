@@ -42,11 +42,7 @@ public partial class PromptWindow : Window
 
         TitleText.Text = request.Title;
         HintText.Text = request.Hint;
-
-        if (!string.IsNullOrEmpty(request.Placeholder))
-        {
-            FooterText.Text = $"For example {request.Placeholder}  ·  Enter to apply, Esc to cancel";
-        }
+        Example.Text = request.Placeholder ?? string.Empty;
 
         Field.TextChanged += (_, _) => ShowWhetherAccepted();
         PreviewKeyDown += OnKey;
@@ -96,6 +92,8 @@ public partial class PromptWindow : Window
 
     private void ShowWhetherAccepted()
     {
+        Example.Visibility = Field.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+
         // An empty field is not wrong yet, just empty.
         var acceptable = Field.Text.Trim().Length == 0
                          || CustomInput.IsValid(_request.Kind, Field.Text, _pageCount);
@@ -108,13 +106,21 @@ public partial class PromptWindow : Window
     /// </summary>
     public void ShowAtCursor()
     {
-        FitToContent();
+        // Realised off-screen first, so WPF can lay the card out and settle on a height
+        // for this particular question. Measuring it by hand was close enough to look
+        // right and wrong by a line, which is the worst of both: the card centres its
+        // content, so a few pixels short takes the title off the top and the footer off
+        // the bottom at the same time, and what is left reads like the whole card.
+        Left = -20000;
+        Top = -20000;
+        Show();
+        UpdateLayout();
 
         GetCursorPos(out var cursor);
 
         var scale = DpiAt(cursor) / 96.0;
-        var width = (int)Math.Round(Width * scale);
-        var height = (int)Math.Round(Height * scale);
+        var width = (int)Math.Round(ActualWidth * scale);
+        var height = (int)Math.Round(ActualHeight * scale);
 
         var left = cursor.X - width / 2;
         var top = cursor.Y - height / 2;
@@ -136,27 +142,29 @@ public partial class PromptWindow : Window
         Backdrop.Source = capture;
         Scrim.Background = GlassTint.For(capture);
 
-        Show();
+        // Glass on before the move, so the first frame anyone sees is the finished card.
+        UpdateLayout();
+
+        Diagnostics.Log.Write(
+            $"prompt: {_request.Title} at {left},{top} size={width}x{height} " +
+            $"({ActualWidth:0}x{ActualHeight:0} at {scale:0.##}x)");
 
         var handle = new WindowInteropHelper(this).Handle;
         SetWindowPos(handle, HWND_TOPMOST, left, top, width, height, SWP_SHOWWINDOW);
-    }
 
-    /// <summary>
-    /// Grows the card to whatever the question needs.
-    ///
-    /// The width is fixed, so the hint wraps to a height that depends on how long it is;
-    /// a fixed window height either clips the longer questions or leaves a gap under the
-    /// short ones. Measuring is done here rather than with SizeToContent because the
-    /// window is placed by hand, and the placement needs the size before the window is
-    /// shown — otherwise the glass backdrop is captured for the wrong rectangle.
-    /// </summary>
-    private void FitToContent()
-    {
-        Root.Measure(new Size(Width, double.PositiveInfinity));
+        // Laid out on one monitor and placed on another, the card lands in the middle of
+        // a DPI change: Windows offers WPF a rectangle scaled by the ratio between the
+        // two, WPF takes it, and the card arrives at the wrong size. Asking a second
+        // time, once it is already on the destination monitor, settles it.
+        if (GetWindowRect(handle, out var landed)
+            && (landed.Right - landed.Left != width || landed.Bottom - landed.Top != height))
+        {
+            Diagnostics.Log.Write(
+                $"prompt rescaled on landing: {landed.Right - landed.Left}x" +
+                $"{landed.Bottom - landed.Top}, asking again for {width}x{height}");
 
-        // Never smaller than designed: a one-line question still wants room to breathe.
-        Height = Math.Max(Height, Math.Ceiling(Root.DesiredSize.Height));
+            SetWindowPos(handle, HWND_TOPMOST, left, top, width, height, SWP_SHOWWINDOW);
+        }
     }
 
     private static Brush Freeze(Brush brush)

@@ -139,6 +139,27 @@ internal static class Program
         Check("a single page cannot be cut", Cuts("2", 1) is null, "one page, no cuts");
         Check("a range is not a cut point", Cuts("3-6", 10) is null, "cuts are single numbers");
 
+        // Every slice that asks for a value has to say what an answer looks like. The
+        // field shows the example, so a slice without one is a blank box and a guess.
+        var asking = Enum.GetValues<FileCategory>()
+            .SelectMany(c => ToolCatalog.For(c))
+            .SelectMany(item => item.Children.Prepend(item))
+            .Where(item => item.Input is not null)
+            .DistinctBy(item => item.Id)
+            .ToList();
+
+        Check("slices do ask for values", asking.Count > 0, $"{asking.Count} of them");
+
+        var mute = asking
+            .Where(item => string.IsNullOrWhiteSpace(item.Input!.Placeholder)
+                           || string.IsNullOrWhiteSpace(item.Input!.Hint)
+                           || string.IsNullOrWhiteSpace(item.Input!.Title))
+            .Select(item => item.Id)
+            .ToList();
+
+        Check("every one shows an example", mute.Count == 0,
+            mute.Count == 0 ? "all of them" : string.Join(", ", mute));
+
         return;
 
         static SizeRequest? Size(string text) =>

@@ -11,15 +11,17 @@
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
         FontFamily="Segoe UI Variable Text, Segoe UI"
-        Width="360" Height="160">
+        SizeToContent="Height"
+        Width="360" MinHeight="138">
 
     <!-- The same glass as the wheel and the progress card. Unlike those, this one does
          take focus: by the time it appears the drop has happened and the drag is over,
          and it cannot be typed into otherwise.
 
-         Height is a starting point, not the final one: the hint wraps, so how tall the
-         card needs to be depends on the question. ShowAtCursor measures the content and
-         sets the real height before showing. -->
+         The height comes from the content, because the hint wraps and the questions are
+         not all the same length. A fixed height clipped the longer ones, and the clipping
+         was invisible to read as clipping: the card centres its content, so what went
+         missing was the title off the top and the footer off the bottom at once. -->
 
     <Grid x:Name="Root" Margin="10">
         <Border CornerRadius="14" Background="#8A000000">
@@ -67,12 +69,23 @@
 
             <Border x:Name="FieldBorder" CornerRadius="7" Margin="0,11,0,0"
                     Background="#38000000" BorderBrush="#4DFFFFFF" BorderThickness="1">
-                <TextBox x:Name="Field"
-                         Background="Transparent" BorderThickness="0"
-                         Foreground="#FFFFFF" CaretBrush="#FFFFFF"
-                         SelectionBrush="#66FFFFFF"
-                         FontSize="14" Padding="10,7" MinHeight="34"
-                         VerticalContentAlignment="Center" />
+                <Grid>
+                    <!-- The example sits in the field rather than under it. The shape of
+                         the answer is the part people actually read, not the sentence
+                         about it, and in the field it is where they are already looking.
+                         It leaves as soon as they start typing. -->
+                    <TextBlock x:Name="Example"
+                               Foreground="#73FFFFFF" FontSize="14"
+                               Margin="11,0,11,0" VerticalAlignment="Center"
+                               IsHitTestVisible="False" TextTrimming="CharacterEllipsis" />
+
+                    <TextBox x:Name="Field"
+                             Background="Transparent" BorderThickness="0"
+                             Foreground="#FFFFFF" CaretBrush="#FFFFFF"
+                             SelectionBrush="#66FFFFFF"
+                             FontSize="14" Padding="10,7" MinHeight="34"
+                             VerticalContentAlignment="Center" />
+                </Grid>
             </Border>
 
             <TextBlock x:Name="FooterText"

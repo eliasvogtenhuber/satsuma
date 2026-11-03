@@ -42,6 +42,9 @@ Then:
   it to click would end the drag rather than step back.
 - **Esc** or **right-click** cancels outright.
 - The wheel stays up after you release the key, so you can take your time.
+- A key that opened a wheel does nothing more until you let go of it. Holding **1** past
+  the end of a drag is the normal way to finish one, and it should not count as asking
+  for a second wheel.
 
 **Clicking.** Select a file in Explorer and press the number key, or hold the key and
 then click a file. The wheel opens where you

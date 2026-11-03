@@ -31,8 +31,8 @@ public static class ToolCatalog
         new(id, "Custom", WheelKind.Tools, Hint: "Type a value") { Input = request };
 
     private static readonly InputRequest SizeInput = new(
-        "Resize to", "A percentage, a long edge, or exact dimensions", InputKind.Size)
-        { Placeholder = "50%, 1080, or 1200x800" };
+        "Resize to", "A percentage, a long edge, or an exact size", InputKind.Size)
+        { Placeholder = "50%, 1080 or 1200x800" };
 
     private static readonly InputRequest QualityInput = new(
         "Quality", "1 is smallest, 100 is best", InputKind.Quality) { Placeholder = "75" };
@@ -105,7 +105,7 @@ public static class ToolCatalog
                 Tool("tool.vid.speed.05", "Half speed", options: new() { ["factor"] = "0.5" }),
                 Custom("tool.vid.speed.custom", new InputRequest(
                     "Speed", "A multiplier: above 1 is faster", InputKind.Speed)
-                    { Placeholder = "1.25" }),
+                    { Placeholder = "1.25 or 0.5" }),
             }),
             Tool("tool.vid.rotate", "Rotate", children: RotatePresets("tool.vid.rotate")),
             Tool("tool.vid.mute", "Remove audio"),
@@ -123,7 +123,7 @@ public static class ToolCatalog
                 Tool("tool.aud.compress.96", "96 kbps", options: new() { ["bitrate"] = "96k" }),
                 Tool("tool.aud.compress.64", "64 kbps", "Speech", new() { ["bitrate"] = "64k" }),
                 Custom("tool.aud.compress.custom", new InputRequest(
-                    "Bitrate", "In kbps", InputKind.Bitrate) { Placeholder = "112" }),
+                    "Bitrate", "In kbps", InputKind.Bitrate) { Placeholder = "112 or 112k" }),
             }),
             Tool("tool.aud.normalize", "Normalize", "Even out loudness"),
             Tool("tool.aud.mono", "To mono"),
@@ -145,16 +145,17 @@ public static class ToolCatalog
                 Tool("tool.pdf.split.10", "Every 10 pages", options: new() { ["chunk"] = "10" }),
                 Tool("tool.pdf.split.1", "Every page", "One file each", new() { ["chunk"] = "1" }),
                 Custom("tool.pdf.split.custom", new InputRequest(
-                    "Split before", "Page numbers to cut at, as in 5 or 5,12,30",
-                    InputKind.SplitPoints) { Placeholder = "12" }),
+                    "Split before", "The page each new file starts at",
+                    InputKind.SplitPoints) { Placeholder = "12 or 5,12,30" }),
             }),
 
             new WheelItem("tool.pdf.pages", "Keep pages", WheelKind.Tools,
                 Hint: "A range, into one PDF")
             {
                 Input = new InputRequest(
-                    "Keep pages", "Numbers and ranges, as in 2,5,9-12", InputKind.PageRange)
-                    { Placeholder = "3-7" }
+                    "Keep pages", "Which pages to keep, and drop the rest",
+                    InputKind.PageRange)
+                    { Placeholder = "3-7, 2,5,9-12 or 8-" }
             },
         },
 

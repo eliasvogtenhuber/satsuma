@@ -49,8 +49,22 @@ public sealed class DragWatcher : IDisposable
     private IntPtr _mouseHook;
     private IntPtr _keyboardHook;
 
-    /// <summary>Bound keys currently held, so auto-repeat can be told from a new press.</summary>
-    private readonly HashSet<int> _heldKeys = new();
+    /// <summary>
+    /// Bound keys held down since they last opened something, against the tick they were
+    /// last seen at. A key stays latched until it is really let go, so holding it cannot
+    /// open a second wheel once the first gesture is over.
+    /// </summary>
+    private readonly Dictionary<int, long> _latched = new();
+
+    /// <summary>
+    /// How long a latched key may go unseen before it counts as released.
+    ///
+    /// A held key repeats about thirty times a second, after an initial delay of at most
+    /// a second, so a gap this long means the key-up was missed rather than that the key
+    /// is still down. That happens when an elevated window has focus, where Satsuma's
+    /// hooks see no input at all; without this the key would stay latched for good.
+    /// </summary>
+    private const long LatchGoesStaleAfterMs = 2500;
 
     /// <summary>A wheel waiting for a click to say which file, or null.</summary>
     private WheelKind? _armedKind;
@@ -201,15 +215,9 @@ public sealed class DragWatcher : IDisposable
                     _dragging = false;
                     _armedKind = null;
 
-                    // Deliberately not clearing the held keys. A key still physically
-                    // down when a drag ends keeps repeating, and wiping the record here
-                    // made the next repeat look like a fresh press, which immediately
-                    // opened a click wheel the user never asked for. The key has to be
-                    // let go before it counts again.
-                    //
-                    // Only keys that really are up are dropped, in case a key-up was
-                    // missed while another window had focus.
-                    PruneReleasedKeys();
+                    // Nothing happens to the latched keys here. A key still down when a
+                    // drag ends is the same key, still held, and it has to be let go
+                    // before it counts as a press again.
 
                     // The drop itself is reported by the wheel window, which gets the
                     // real data object. This only matters for a drag released elsewhere.
@@ -249,11 +257,23 @@ public sealed class DragWatcher : IDisposable
                 else if (_keyMap.TryGetValue(key, out var wheel))
                 {
                     // Holding a key makes Windows repeat its key-down about thirty times
-                    // a second. Each repeat used to be treated as a fresh request for a
-                    // wheel, which rebuilt it and wiped whatever was hovered. Only the
-                    // first press counts; the repeats are still swallowed so nothing
-                    // underneath sees them either.
-                    if (!_heldKeys.Add(key)) return Swallow;
+                    // a second, and the key is usually still down when the gesture it
+                    // started is over. Both cases are the same key, still held, and
+                    // neither is a request for anything: the repeats would rebuild the
+                    // wheel and wipe whatever was hovered, and the ones arriving after a
+                    // drag ends would open a second wheel nobody asked for. So a key
+                    // that opened something is latched until it is really let go, and
+                    // the repeats are swallowed so nothing underneath sees them either.
+                    var now = Environment.TickCount64;
+                    DropStaleLatches(now);
+
+                    if (_latched.ContainsKey(key))
+                    {
+                        _latched[key] = now;
+                        return Swallow;
+                    }
+
+                    _latched[key] = now;
 
                     Log.Write($"bound key 0x{key:X2} -> {wheel}, dragging={_dragging}");
 
@@ -317,7 +337,10 @@ public sealed class DragWatcher : IDisposable
                 var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
                 var key = (int)data.vkCode;
 
-                var wasHeld = _heldKeys.Remove(key);
+                // The only thing that unlatches a key. Letting go is the whole gesture.
+                var wasHeld = _latched.Remove(key);
+                if (wasHeld) Log.Write($"key 0x{key:X2} released");
+
                 if (wasHeld && _keyMap.TryGetValue(key, out var released) && _armedKind == released)
                 {
                     _armedKind = null;
@@ -336,17 +359,22 @@ public sealed class DragWatcher : IDisposable
     private static readonly IntPtr Swallow = new(1);
 
     /// <summary>
-    /// Forgets held keys that are no longer physically down. A key-up can be missed when
-    /// focus moves to another window mid-gesture, and without this the key would count as
-    /// held forever and never open a wheel again.
+    /// Forgets latched keys that have gone quiet for long enough to have been let go.
+    ///
+    /// Asking Windows whether the key is still down looks like the obvious check and is
+    /// the wrong one: a key-down swallowed by a low-level hook never reaches the
+    /// asynchronous key state, so a key held through a drag reads as up the whole time.
+    /// Doing it that way unlatched the key the moment the drag ended, and the next
+    /// repeat -- a few milliseconds later, with the key still held -- looked like a
+    /// fresh press and opened a wheel on its own. Silence is the honest signal.
     /// </summary>
-    private void PruneReleasedKeys()
+    private void DropStaleLatches(long now)
     {
-        if (_heldKeys.Count == 0) return;
+        if (_latched.Count == 0) return;
 
-        foreach (var key in _heldKeys.ToList())
+        foreach (var (key, seen) in _latched.ToList())
         {
-            if (!IsKeyDown(key)) _heldKeys.Remove(key);
+            if (now - seen > LatchGoesStaleAfterMs) _latched.Remove(key);
         }
     }
 

@@ -214,7 +214,7 @@ Project: https://ffmpeg.org
 Satsuma runs these as separate processes and does not link against them. Satsuma's own
 licence is MIT and covers only Satsuma's own code; see LICENSE.txt and
 THIRD-PARTY-NOTICES.md in the folder above this one.
-"@ | Set-Content (Join-Path $tools 'README.txt') -Encoding utf8
+"@ | Set-Content (Join-Path $tools 'ffmpeg-README.txt') -Encoding utf8
 
     $size = (Get-ChildItem $tools | Measure-Object Length -Sum).Sum / 1MB
     Write-Host ("ffmpeg bundled: {0:N0} MB in tools\" -f $size) -ForegroundColor Green

@@ -14,8 +14,18 @@ public sealed class VideoFormatHandler : MediaHandlerBase, IJobHandler
         if (!FfmpegLocator.IsAvailable) return false;
 
         var extension = request.Item.OutputExtension;
-        return extension is not null && Known.Contains(extension);
+        if (extension is null || !Known.Contains(extension)) return false;
+
+        // MP4, MOV and MKV are H.264 here. A build without an H.264 encoder cannot
+        // make them, and a slice that fails after the drop is worse than one that was
+        // never drawn.
+        return !NeedsH264.Contains(extension) || H264.IsAvailable;
     }
+
+    private static readonly HashSet<string> NeedsH264 = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp4", ".mov", ".mkv"
+    };
 
     private static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase)
         { ".mp4", ".mov", ".mkv", ".webm", ".avi", ".wmv", ".gif", ".mp3" };
@@ -44,18 +54,18 @@ public sealed class VideoFormatHandler : MediaHandlerBase, IJobHandler
             case ".mp4":
             case ".mov":
                 // faststart puts the index up front, so the file plays while it downloads.
-                return new[]
+                return H264.Args(23).Concat(new[]
                 {
-                    "-c:v", "libx264", "-crf", "23", "-preset", "medium", "-pix_fmt", "yuv420p",
+                    "-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"
-                };
+                });
 
             case ".mkv":
-                return new[]
+                return H264.Args(23).Concat(new[]
                 {
-                    "-c:v", "libx264", "-crf", "23", "-preset", "medium", "-pix_fmt", "yuv420p",
+                    "-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-b:a", "192k"
-                };
+                });
 
             case ".webm":
                 // -b:v 0 is what puts libvpx-vp9 into constant-quality mode.

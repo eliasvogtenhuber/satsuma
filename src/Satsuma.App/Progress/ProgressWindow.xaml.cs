@@ -150,7 +150,15 @@ public partial class ProgressWindow : Window
 
     private void RevealResults()
     {
-        if (_results.Count == 0) return;
+        // A card with nothing to reveal is a card reporting a failure, and clicking it
+        // did nothing at all: no reveal, and no close either, so the only way to be rid
+        // of it was to wait out the timer. Clicking anything that will not open should
+        // at least put it away.
+        if (_results.Count == 0)
+        {
+            Close();
+            return;
+        }
 
         foreach (var group in _results
                      .Where(p => File.Exists(p) || Directory.Exists(p))

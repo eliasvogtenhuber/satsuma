@@ -187,6 +187,46 @@ internal static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern int GetClassName(IntPtr hWnd, char[] lpClassName, int nMaxCount);
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GUITHREADINFO
+    {
+        public int cbSize;
+        public int flags;
+        public IntPtr hwndActive;
+        public IntPtr hwndFocus;
+        public IntPtr hwndCapture;
+        public IntPtr hwndMenuOwner;
+        public IntPtr hwndMoveSize;
+        public IntPtr hwndCaret;
+        public RECT rcCaret;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO info);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+
+    /// <summary>
+    /// The control with keyboard focus inside another process's window.
+    ///
+    /// GetFocus only answers for the calling thread, so a tray app asking what has
+    /// focus in Explorer gets nothing. This asks about Explorer's own input thread.
+    /// </summary>
+    internal static IntPtr FocusedControlIn(IntPtr window)
+    {
+        if (window == IntPtr.Zero) return IntPtr.Zero;
+
+        var thread = GetWindowThreadProcessId(window, IntPtr.Zero);
+        if (thread == 0) return IntPtr.Zero;
+
+        var info = new GUITHREADINFO();
+        info.cbSize = Marshal.SizeOf<GUITHREADINFO>();
+
+        return GetGUIThreadInfo(thread, ref info) ? info.hwndFocus : IntPtr.Zero;
+    }
+
     internal static string ClassNameOf(IntPtr hWnd)
     {
         var buffer = new char[256];

@@ -12,6 +12,12 @@ public sealed class VideoToolHandler : MediaHandlerBase, IJobHandler
     private static readonly string[] Operations =
         { "compress", "resize", "speed", "rotate", "mute", "snapshot", "audio", "join" };
 
+    /// <summary>Operations that leave the video stream alone.</summary>
+    private static readonly HashSet<string> PassesVideoThrough = new(StringComparer.Ordinal)
+    {
+        "mute", "snapshot", "audio"
+    };
+
     public bool CanHandle(JobRequest request)
     {
         if (request.Category != FileCategory.Video) return false;
@@ -20,6 +26,10 @@ public sealed class VideoToolHandler : MediaHandlerBase, IJobHandler
 
         var operation = OperationFrom(request.Item.Id, Prefix, Operations);
         if (operation is null) return false;
+
+        // Everything that re-encodes the picture needs an H.264 encoder; the ones that
+        // only touch the container or the audio do not.
+        if (!H264.IsAvailable && !PassesVideoThrough.Contains(operation)) return false;
 
         // Joining one clip to nothing is not a job.
         return operation != "join" || request.Files.Count > 1;
@@ -57,15 +67,15 @@ public sealed class VideoToolHandler : MediaHandlerBase, IJobHandler
                     ? (int)Math.Round(51 - quality * 0.45)
                     : ReadInt(options, "crf") ?? 30;
                 target = OutputNaming.Next(source.Path, sourceExtension, "compressed");
-                args = new List<string>
+                args = new List<string> { "-i", source.Path };
+                args.AddRange(H264.Args(crf));
+                args.AddRange(new[]
                 {
-                    "-i", source.Path,
-                    "-c:v", "libx264", "-crf", crf.ToString(), "-preset", "medium",
                     "-pix_fmt", "yuv420p",
                     // Audio is copied, not re-encoded: the ask was to compress the video,
                     // and re-encoding could raise the audio bitrate above the source.
                     "-c:a", "copy", target
-                };
+                });
                 break;
             }
 
@@ -112,12 +122,9 @@ public sealed class VideoToolHandler : MediaHandlerBase, IJobHandler
                 }
 
                 target = OutputNaming.Next(source.Path, sourceExtension, suffix);
-                args = new List<string>
-                {
-                    "-i", source.Path, "-vf", filter,
-                    "-c:v", "libx264", "-crf", "23", "-preset", "medium", "-pix_fmt", "yuv420p",
-                    "-c:a", "copy", target
-                };
+                args = new List<string> { "-i", source.Path, "-vf", filter };
+                args.AddRange(H264.Args(23));
+                args.AddRange(new[] { "-pix_fmt", "yuv420p", "-c:a", "copy", target });
                 break;
             }
 
@@ -152,11 +159,8 @@ public sealed class VideoToolHandler : MediaHandlerBase, IJobHandler
                     args.AddRange(new[] { "-filter:v", $"setpts=PTS/{Num(factor)}", "-an" });
                 }
 
-                args.AddRange(new[]
-                {
-                    "-c:v", "libx264", "-crf", "23", "-preset", "medium", "-pix_fmt", "yuv420p",
-                    target
-                });
+                args.AddRange(H264.Args(23));
+                args.AddRange(new[] { "-pix_fmt", "yuv420p", target });
                 break;
             }
 
@@ -172,12 +176,9 @@ public sealed class VideoToolHandler : MediaHandlerBase, IJobHandler
                 };
 
                 target = OutputNaming.Next(source.Path, sourceExtension, "rotated");
-                args = new List<string>
-                {
-                    "-i", source.Path, "-vf", filter,
-                    "-c:v", "libx264", "-crf", "23", "-preset", "medium", "-pix_fmt", "yuv420p",
-                    "-c:a", "copy", target
-                };
+                args = new List<string> { "-i", source.Path, "-vf", filter };
+                args.AddRange(H264.Args(23));
+                args.AddRange(new[] { "-pix_fmt", "yuv420p", "-c:a", "copy", target });
                 break;
             }
 
@@ -283,10 +284,8 @@ public sealed class VideoToolHandler : MediaHandlerBase, IJobHandler
         args.AddRange(new[] { "-filter_complex", filter, "-map", "[v]" });
         if (withAudio) args.AddRange(new[] { "-map", "[a]", "-c:a", "aac", "-b:a", "192k" });
 
-        args.AddRange(new[]
-        {
-            "-c:v", "libx264", "-crf", "23", "-preset", "medium", "-pix_fmt", "yuv420p", target
-        });
+        args.AddRange(H264.Args(23));
+        args.AddRange(new[] { "-pix_fmt", "yuv420p", target });
 
         // Progress is measured against the first clip only, so report against the total.
         var total = TimeSpan.Zero;

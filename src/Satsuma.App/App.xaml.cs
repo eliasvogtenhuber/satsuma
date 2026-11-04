@@ -143,9 +143,12 @@ public partial class App : Application
                 if (_wheel.HitTestScreen(click.ScreenX, click.ScreenY)) return;
 
                 // A wheel that is open but still has nothing to work on is waiting to be
-                // told which file. Clicking one away from the wheel answers that, rather
-                // than meaning "go away".
-                if (!_wheel.HasFiles)
+                // told which file, and a click on a file answers that rather than
+                // meaning "go away". Only a click on a file, though: this used to
+                // swallow every outside click, so an empty wheel over a window with no
+                // selection to read could not be dismissed by clicking at all, and Esc
+                // or a right-click were the only ways out of it.
+                if (!_wheel.HasFiles && DragWatcher.IsShellWindow(click.SourceWindow))
                 {
                     SeedFromSelectionAsync(_wheel, click.SourceWindow, delayMs: 130);
                     return;
@@ -925,21 +928,35 @@ public partial class App : Application
         var request = new JobRequest(choice.Item, choice.Files, choice.Category);
         var progress = new Progress<JobProgress>(card.Report);
 
-        BatchResult result;
+        // Everything between showing the card and completing it is inside this, because
+        // the card only ever closes once Complete has started its timer. Anything that
+        // threw in between -- the delivery step used to be outside the try -- left a
+        // card on screen for good, with no way to dismiss it and nothing but a tray
+        // notification to say why.
+        var result = BatchResult.Nothing();
+
         try
         {
-            result = await _runner.RunAsync(request, progress, cancellation.Token);
+            try
+            {
+                result = await _runner.RunAsync(request, progress, cancellation.Token);
+            }
+            catch (Exception ex)
+            {
+                result = BatchResult.Nothing(ex.Message);
+            }
+
+            // Handlers write beside the original; moving them is a separate, later
+            // step, so a cancelled or failed run never half-moves anything.
+            if (destination != Destination.Beside && result.AnySucceeded && !result.Cancelled)
+            {
+                result = await DeliverAsync(result, destination, choice.Item.Label, folder);
+            }
         }
         catch (Exception ex)
         {
+            Log.Write($"job {choice.Item.Id} threw after the card was up: {ex}");
             result = BatchResult.Nothing(ex.Message);
-        }
-
-        // Handlers write beside the original; moving them is a separate, later step, so
-        // a cancelled or failed run never half-moves anything.
-        if (destination != Destination.Beside && result.AnySucceeded && !result.Cancelled)
-        {
-            result = await DeliverAsync(result, destination, choice.Item.Label, folder);
         }
 
         // Until this was here a failed job left nothing behind at all, and the only

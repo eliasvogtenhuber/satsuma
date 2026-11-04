@@ -271,9 +271,12 @@ public sealed class DragWatcher : IDisposable
                         if (WheelOpen)
                         {
                             var point = data.pt;
+                            var under = GetAncestor(WindowFromPoint(point), GA_ROOT);
+
                             Post(() => ClickedWhileOpen?.Invoke(this,
                                 new DragModifierEvent(WheelKind.Formats,
-                                    point.X, point.Y, point.X, point.Y)));
+                                    point.X, point.Y, point.X, point.Y)
+                                { SourceWindow = under }));
                         }
                     }
                     break;
@@ -427,7 +430,7 @@ public sealed class DragWatcher : IDisposable
                     // a wheel appearing while someone writes "1" would be indefensible.
                     var source = GetForegroundWindow();
 
-                    if (!_dragging && IsShellWindow(source))
+                    if (!_dragging && IsShellWindow(source) && !IsTypingInShell(source))
                     {
                         _armedKind = wheel;
 
@@ -552,7 +555,7 @@ public sealed class DragWatcher : IDisposable
     /// click-driven wheel from firing on a plain number key typed into something else:
     /// outside a file manager those keys belong to whoever is being typed into.
     /// </summary>
-    private static bool IsShellWindow(IntPtr window)
+    internal static bool IsShellWindow(IntPtr window)
     {
         if (window == IntPtr.Zero) return false;
 
@@ -562,6 +565,31 @@ public sealed class DragWatcher : IDisposable
             "ExploreWClass" => true,   // the older explorer frame
             "Progman" => true,         // the Desktop
             "WorkerW" => true,         // the Desktop with a wallpaper slideshow
+            _ => false
+        };
+    }
+
+    /// <summary>
+    /// True when Explorer is going to use this keystroke as text rather than as a
+    /// command: a rename box, the address bar, the search box.
+    ///
+    /// Satsuma's keys are the digits, which is exactly what people type into all three.
+    /// Taking them on the strength of "Explorer has focus" meant a file could not be
+    /// renamed to "Report 2026" while Satsuma was running -- the 2 opened a wheel and
+    /// never reached the box. The file list has focus when the keys are meant for us,
+    /// and an edit control has it when they are not.
+    /// </summary>
+    private static bool IsTypingInShell(IntPtr window)
+    {
+        var focused = FocusedControlIn(window);
+        if (focused == IntPtr.Zero) return false;
+
+        return ClassNameOf(focused) switch
+        {
+            "Edit" => true,                      // the rename box
+            "RichEditD2DPT" => true,             // the address and search boxes
+            "ComboBoxEx32" or "ComboBox" => true,
+            "SearchEditBoxWrapperClass" => true,
             _ => false
         };
     }

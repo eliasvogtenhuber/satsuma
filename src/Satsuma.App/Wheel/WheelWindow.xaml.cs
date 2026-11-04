@@ -857,6 +857,17 @@ public partial class WheelWindow : Window
             return "Install ffmpeg for this";
         }
 
+        // Documents, spreadsheets and slides go through LibreOffice, and without one
+        // there is nothing on the wheel for them. "Not supported yet" said Satsuma
+        // could not do it; it can, and the machine is one install away. The tray menu
+        // did say so, which is no use to somebody looking at the wheel.
+        if (_category is FileCategory.Document or FileCategory.Slides
+                or FileCategory.Spreadsheet
+            && !Core.Tools.LibreOffice.IsAvailable)
+        {
+            return "Install LibreOffice for this";
+        }
+
         return _category switch
         {
             FileCategory.Unknown when _files.Count > 1 => "Mixed selection",

@@ -1208,7 +1208,9 @@ internal static class Program
             {
                 "-f", "lavfi", "-i", "testsrc=size=320x240:rate=15:duration=2",
                 "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", source
+                // Whatever H.264 encoder this ffmpeg has, which is the point: the bundled
+                // build has no libx264 and asking for it by name is the bug under test.
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", source
             }))
         {
             Skip("video", "could not generate a test clip");
@@ -1233,7 +1235,7 @@ internal static class Program
             {
                 "-f", "lavfi", "-i", "testsrc=size=640x480:rate=15:duration=4",
                 "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", source
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", source
             }))
         {
             Skip("video tools", "could not generate a test clip");
@@ -1304,7 +1306,7 @@ internal static class Program
         {
             "-f", "lavfi", "-i", "testsrc=size=640x480:rate=15:duration=2",
             "-f", "lavfi", "-i", "sine=frequency=660:duration=2",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", second
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", second
         });
 
         var join = Leaf(tools, "tool.vid.join");

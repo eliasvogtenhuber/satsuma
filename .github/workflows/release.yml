@@ -61,6 +61,26 @@ jobs:
           Stop-Process -Id $app.Id -Force
           Write-Host 'Started and stayed up.'
 
+      # Pushing a v* tag is what starts this, and a tag can be pushed again -- moved by
+      # a history rewrite, say. That happened: re-pushing v0.1.0 built the commit it now
+      # pointed at and published it over the top, as Latest, from before a fix that the
+      # existing release already had. gh release create refuses when a published release
+      # exists, which is why only half of it went wrong; a draft is not in its way.
+      - name: Refuse to republish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $existing = gh release view "v$version" --json id 2>$null
+
+          if ($LASTEXITCODE -eq 0 -and $existing) {
+            throw "v$version has already been released. Releases are written once: " +
+                  "cut a new version rather than moving this tag."
+          }
+
+          Write-Host "v$version is new."
+
       - name: Publish the release
         shell: pwsh
         env:

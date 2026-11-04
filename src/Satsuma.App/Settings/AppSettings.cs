@@ -133,18 +133,29 @@ public sealed class AppSettings
         return clashes;
     }
 
+    /// <summary>
+    /// True when there was no settings file to read, which means nobody has ever run
+    /// this copy before. Not persisted: it describes the moment, not the settings.
+    /// </summary>
+    [JsonIgnore]
+    public bool FirstRun { get; private set; }
+
     public static AppSettings Load()
     {
         try
         {
-            if (!File.Exists(SettingsPath)) return new AppSettings();
+            if (!File.Exists(SettingsPath)) return new AppSettings { FirstRun = true };
 
             var json = File.ReadAllText(SettingsPath);
-            return JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
+            var loaded = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
+
+            return loaded ?? new AppSettings { FirstRun = true };
         }
         catch (Exception)
         {
-            // A corrupt settings file should never stop the app starting.
+            // A corrupt settings file should never stop the app starting. It is not a
+            // first run, though: something was there, and overwriting what the user had
+            // chosen is worse than ignoring it this once.
             return new AppSettings();
         }
     }

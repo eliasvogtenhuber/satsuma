@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using Satsuma.App.Diagnostics;
 using Satsuma.App.Settings;
 using Satsuma.Core.Tools;
 
@@ -38,6 +39,8 @@ public sealed class TrayController : IDisposable
         };
 
         _icon.DoubleClick += (_, _) => ShelfRequested?.Invoke(this, EventArgs.Empty);
+
+        SettleStartup();
     }
 
     private ContextMenuStrip BuildMenu()
@@ -91,7 +94,25 @@ public sealed class TrayController : IDisposable
             CheckOnClick = true,
             Checked = IsRegisteredForStartup()
         };
-        startup.CheckedChanged += (_, _) => SetStartup(startup.Checked);
+
+        // Read again each time the menu opens rather than trusting what it was built
+        // with. The first run registers Satsuma after this menu exists, and the entry
+        // can be taken away from outside -- Task Manager's Startup tab does exactly
+        // that -- so a tick that was right once is not right for long.
+        var settling = false;
+
+        menu.Opening += (_, _) =>
+        {
+            settling = true;
+            startup.Checked = IsRegisteredForStartup();
+            settling = false;
+        };
+
+        startup.CheckedChanged += (_, _) =>
+        {
+            if (!settling) SetStartup(startup.Checked);
+        };
+
         menu.Items.Add(startup);
 
         var settingsItem = new ToolStripMenuItem("Open settings file");
@@ -163,16 +184,56 @@ public sealed class TrayController : IDisposable
         }
     }
 
-    private static bool IsRegisteredForStartup()
+    private static bool IsRegisteredForStartup() => RegisteredPath() is not null;
+
+    /// <summary>The exe the startup entry points at, or null if there is no entry.</summary>
+    private static string? RegisteredPath()
     {
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKey);
-            return key?.GetValue(RunValue) is not null;
+            return (key?.GetValue(RunValue) as string)?.Trim('"');
         }
         catch (Exception)
         {
-            return false;
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Satsuma is only any use while it is running, and it has no window to be found
+    /// again from, so the first run registers it to come back after a restart. The tray
+    /// says so at the time and the menu unticks it; a tray app that quietly installs
+    /// itself into startup and never mentions it is the thing nobody wants.
+    ///
+    /// Also repairs the entry when the folder has moved. There is no installer here,
+    /// and a folder that gets dragged to Program Files three days later would otherwise
+    /// leave a startup entry pointing at nothing.
+    /// </summary>
+    private void SettleStartup()
+    {
+        var exe = Environment.ProcessPath;
+        if (exe is null) return;
+
+        var registered = RegisteredPath();
+
+        if (registered is null)
+        {
+            if (!_settings.FirstRun) return;
+
+            SetStartup(true);
+
+            Notify("Satsuma is running",
+                "It lives in the tray and will start with Windows. " +
+                "Right-click the icon to change that.");
+
+            return;
+        }
+
+        if (!string.Equals(registered, exe, StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Write($"startup entry moved: {registered} -> {exe}");
+            SetStartup(true);
         }
     }
 

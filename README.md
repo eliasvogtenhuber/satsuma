@@ -177,8 +177,12 @@ That is the whole install. The .NET runtime is in the folder, because Windows do
 ship one, and so is ffmpeg, because almost everything in video and audio needs it. The
 download is about 135MB and unpacks to around 320MB.
 
-Satsuma starts in the tray; right-click the tray icon for the menu, and tick **Start with
-Windows** if you want it there permanently.
+Satsuma starts in the tray, and sets itself to start with Windows the first time you run
+it — it is only any use while it is running, and it has no window to be found again from.
+It says so when it does, and **Start with Windows** in the tray menu unticks it.
+
+Move the folder later and it repairs its own startup entry the next time it runs, so
+there is nothing to redo.
 
 Windows will warn you the first time: the exe is not code-signed, because a certificate
 costs more per year than this project is worth. **More info → Run anyway**, or check the

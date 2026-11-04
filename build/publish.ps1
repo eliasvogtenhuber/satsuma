@@ -72,6 +72,21 @@ if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with $LASTEXITCODE." }
 # None of it is read at runtime and it is a tenth of the download.
 Get-ChildItem $stage -Include *.pdb, *.xml -File -Recurse | Remove-Item -Force
 
+# ---- Licences --------------------------------------------------------------
+
+# A self-contained publish drops the .NET runtime's own licence in as plain "LICENSE",
+# which is the only file by that name in the folder a user unzips. Left alone, Satsuma
+# ships somebody else's licence as its licence, and its own is nowhere in the download.
+$runtimeLicence = Join-Path $stage 'LICENSE'
+if (Test-Path $runtimeLicence) {
+    Move-Item $runtimeLicence (Join-Path $stage 'dotnet-LICENSE.txt') -Force
+}
+
+Copy-Item (Join-Path $root 'LICENSE') (Join-Path $stage 'LICENSE.txt') -Force
+
+$notices = Join-Path $root 'THIRD-PARTY-NOTICES.md'
+if (Test-Path $notices) { Copy-Item $notices $stage -Force }
+
 # ---- ffmpeg ----------------------------------------------------------------
 
 # An LGPL build, used as a separate process and shipped unmodified. That keeps it clear of
@@ -132,7 +147,8 @@ Source:  https://github.com/BtbN/FFmpeg-Builds
 Project: https://ffmpeg.org
 
 Satsuma runs these as separate processes and does not link against them. Satsuma's own
-licence is MIT and covers only Satsuma's own code; see the LICENSE file above this folder.
+licence is MIT and covers only Satsuma's own code; see LICENSE.txt and
+THIRD-PARTY-NOTICES.md in the folder above this one.
 "@ | Set-Content (Join-Path $tools 'README.txt') -Encoding utf8
 
     $size = (Get-ChildItem $tools | Measure-Object Length -Sum).Sum / 1MB

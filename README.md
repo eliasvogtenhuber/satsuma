@@ -1,16 +1,18 @@
 # Satsuma
 
-File conversion that lives inside the drag you were already doing.
+**[Tangerine](https://tangerineformac.com/) for Windows.** File conversion that lives
+inside the drag you were already doing.
 
 Start dragging a file in File Explorer or on the Desktop, press **1**, and a wheel of
 output formats appears under the pointer. Lean toward one, let go, and a converted copy
 lands next to the original. No window, no upload, no app to open.
 
-Satsuma is a Windows take on [Tangerine](https://tangerineformac.com/) for macOS by Thameem
-(Leap Studio). This is an independent reimplementation, not a port — none of Tangerine's
-code is here, and the two differ wherever Windows does.
+If you have seen Tangerine on a Mac and wanted it on Windows, this is that. It is an
+independent reimplementation rather than a port — none of Tangerine's code is here, and
+the two differ wherever Windows does — but the idea is Thameem's (Leap Studio), and the
+gesture is meant to feel the same.
 
-![The wheel over a dark desktop](docs/wheel-dark.png)
+![The Convert to wheel, open on a PNG](docs/wheel-dark.png)
 
 ## Status
 

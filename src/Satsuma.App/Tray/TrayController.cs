@@ -55,6 +55,12 @@ public sealed class TrayController : IDisposable
 
         menu.Items.Add(new ToolStripSeparator());
 
+        var how = new ToolStripMenuItem("How it works");
+        how.Click += (_, _) => ShowHowItWorks();
+        menu.Items.Add(how);
+
+        menu.Items.Add(new ToolStripSeparator());
+
         var ffmpeg = new ToolStripMenuItem(FfmpegLocator.IsAvailable
             ? "ffmpeg: ready"
             : "ffmpeg: not found") { Enabled = false };
@@ -154,6 +160,45 @@ public sealed class TrayController : IDisposable
             MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
+    /// <summary>
+    /// What the keys do, which is the whole of Satsuma's interface.
+    ///
+    /// There is no window to put this in and no installer to say it during, so an app
+    /// that does not say it here does not say it at all: a stranger who unzips Satsuma
+    /// gets a tray icon and no idea that any of this exists. Shown once on the first
+    /// run, and from the menu whenever anyone wants it again.
+    /// </summary>
+    private void ShowHowItWorks()
+    {
+        var message =
+            "Satsuma has no window. It works inside the drag you were already doing.\n\n" +
+            "START DRAGGING a file in File Explorer, then press:\n\n" +
+            $"    {Describe(_settings.FormatsKey)}   convert to another format\n" +
+            $"    {Describe(_settings.ToolsKey)}   tools: compress, resize, rotate, split, merge\n" +
+            $"    {Describe(_settings.ActionsKey)}   actions: reveal, copy, move, shelf\n\n" +
+            "A wheel appears under the pointer. Lean toward a slice and let go of the " +
+            "mouse. The result lands next to the original.\n\n" +
+            "Or skip the drag: select a file and press the same key. The wheel stays " +
+            "put and you click a slice.\n\n" +
+            "WHILE THE WHEEL IS OPEN\n\n" +
+            $"    {Describe(_settings.BackKey)}   back out of a question and show the wheel again\n" +
+            "    Esc   or right-click, to cancel\n\n" +
+            "HOLD THESE THROUGH TO THE END OF THE GESTURE\n\n" +
+            "    Space   put the results somewhere else. Let go after dropping and\n" +
+            "            Satsuma makes a folder; keep holding and select one instead.\n\n" +
+            "    Alt     replace the original. It goes to the Recycle Bin and the\n" +
+            "            result takes its name.\n\n" +
+            "Holding either shows a small mark, so you can see which you are in before " +
+            "you let go.\n\n" +
+            "This is in the tray menu whenever you want it again.";
+
+        MessageBox.Show(message, "How Satsuma works",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private static string Describe(string binding) =>
+        string.IsNullOrWhiteSpace(binding) ? "?" : binding.Trim();
+
     private void ShowLibreOfficeHelp()
     {
         const string message =
@@ -226,6 +271,11 @@ public sealed class TrayController : IDisposable
             Notify("Satsuma is running",
                 "It lives in the tray and will start with Windows. " +
                 "Right-click the icon to change that.");
+
+            // The one moment it is worth interrupting someone. Satsuma has no window
+            // and does nothing until a key is pressed during a drag, so a first run
+            // that says nothing is indistinguishable from one that did not work.
+            ShowHowItWorks();
 
             return;
         }

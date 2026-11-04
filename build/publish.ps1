@@ -84,6 +84,71 @@ if (Test-Path $runtimeLicence) {
 
 Copy-Item (Join-Path $root 'LICENSE') (Join-Path $stage 'LICENSE.txt') -Force
 
+# The folder is the whole install, so it is also the only documentation anyone is
+# guaranteed to see. Satsuma has no window and does nothing until a key is pressed
+# mid-drag; a zip that does not say so is a zip that looks broken.
+@"
+Satsuma $Version
+Tangerine for Windows: file conversion inside the drag you were already doing.
+
+
+GETTING STARTED
+
+  1. Put this folder somewhere permanent -- it is the whole install, and Satsuma
+     remembers where it is. Not your Downloads folder.
+  2. Run Satsuma.exe. Windows will warn you about an unknown publisher, because
+     the exe is not code-signed: More info -> Run anyway.
+  3. Nothing appears. That is correct. Satsuma lives in the system tray, and sets
+     itself to start with Windows so it is always there.
+
+
+USING IT
+
+  Start dragging a file in File Explorer, and while still dragging, press:
+
+      1    convert to another format
+      2    tools: compress, resize, rotate, split, merge
+      3    actions: reveal, copy, move, shelf
+
+  A wheel appears under the pointer. Lean toward a slice and let go of the mouse
+  button. The converted file lands next to the original.
+
+  Or skip the drag: select a file and press the same key. The wheel stays put and
+  you click a slice.
+
+
+  While the wheel is open:
+
+      4         back out of a question and show the wheel again
+      Esc       cancel, as does right-clicking
+
+  Held through to the end of the gesture:
+
+      Space     put the results somewhere else. Let go after dropping and Satsuma
+                makes a folder for them; keep holding and select one instead.
+
+      Alt       replace the original. It goes to the Recycle Bin, and the result
+                takes its name.
+
+
+WHAT IS IN THIS FOLDER
+
+  Satsuma.exe               the app
+  tools\                    ffmpeg, for video, audio, WebP and AVIF
+  LICENSE.txt               Satsuma's licence (MIT)
+  dotnet-LICENSE.txt        the bundled .NET runtime's licence
+  THIRD-PARTY-NOTICES.md    everything else, and under what terms
+
+  Documents, spreadsheets and slides need LibreOffice, which is not bundled: it is
+  larger than everything here put together. The tray menu says whether it found one
+  and how to install it. Everything else works out of the box.
+
+
+  Right-click the tray icon for "How it works", settings, and the rest.
+
+  https://github.com/eliasvogtenhuber/satsuma
+"@ | Set-Content (Join-Path $stage 'How to use Satsuma.txt') -Encoding utf8
+
 $notices = Join-Path $root 'THIRD-PARTY-NOTICES.md'
 if (Test-Path $notices) { Copy-Item $notices $stage -Force }
 

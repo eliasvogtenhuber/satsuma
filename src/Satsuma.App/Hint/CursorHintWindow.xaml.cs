@@ -118,6 +118,29 @@ public partial class CursorHintWindow : Window
         PlaceAt(spot.X, spot.Y);
     }
 
+    /// <summary>
+    /// Moves to the pointer and says something new, for when the pointer is where the
+    /// user just acted.
+    ///
+    /// Picking files to merge is a run of clicks across a file list, and a tick parked
+    /// where the first one happened is a long way from the fifth. So each pick brings
+    /// the label along: it is beside the file just chosen, which is where the hand
+    /// already is and where the next click is likeliest to be.
+    ///
+    /// Distinct from <see cref="Say"/>, which must not move -- a caption that arrives
+    /// on its own, from a read finishing, would otherwise walk the tick out from under
+    /// a finger that is pressing it.
+    /// </summary>
+    public void Reanchor(string caption)
+    {
+        Caption.Text = caption;
+        UpdateLayout();
+
+        if (_follow.IsEnabled) return;
+
+        PlaceAtCursor();
+    }
+
     public void Dismiss()
     {
         _follow.Stop();

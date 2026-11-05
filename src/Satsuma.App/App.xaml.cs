@@ -120,6 +120,7 @@ public partial class App : Application
             TryShowPreview(e.Args);
             TryShelf(e.Args);
             TryHint(e.Args);
+            TryHighlight(e.Args);
         }, DispatcherPriority.Normal);
 
         _closeAfterDrag = new DispatcherTimer
@@ -300,6 +301,88 @@ public partial class App : Application
 
         Log.Write("--hint: done");
         _hint.Dismiss();
+    }
+
+    /// <summary>
+    /// --highlight &lt;folder&gt;: opens that folder, selects the first two files in it from
+    /// outside, then reads the selection back.
+    ///
+    /// Writing a selection is shell COM asking Explorer to do something rather than
+    /// asking it a question, and the failure mode is silence: the call returns, nothing
+    /// is selected, and the only sign is that merging quietly picks up fewer files than
+    /// were clicked. Reading it back afterwards is the one answer that cannot be
+    /// mistaken -- if the files come back, Explorer really did select them.
+    /// </summary>
+    private async void TryHighlight(IReadOnlyList<string> args)
+    {
+        var flag = args.ToList().FindIndex(a =>
+            a.Equals("--highlight", StringComparison.OrdinalIgnoreCase));
+
+        if (flag < 0 || args.Count <= flag + 1) return;
+
+        var folder = args[flag + 1];
+        if (!Directory.Exists(folder)) { Log.Write($"--highlight: no {folder}"); return; }
+
+        var files = Directory.GetFiles(folder).Take(2).ToList();
+        if (files.Count == 0) { Log.Write("--highlight: folder is empty"); return; }
+
+        System.Diagnostics.Process.Start("explorer.exe", $"\"{folder}\"");
+        await Task.Delay(2500);
+
+        var window = IntPtr.Zero;
+        var leaf = Path.GetFileName(folder.TrimEnd('\\'));
+
+        NativeMethods.EnumWindows((handle, _) =>
+        {
+            var text = new System.Text.StringBuilder(512);
+            NativeMethods.GetWindowText(handle, text, text.Capacity);
+            var title = text.ToString();
+
+            if (NativeMethods.ClassNameOf(handle) == "CabinetWClass"
+                && title.Contains(leaf, StringComparison.OrdinalIgnoreCase))
+            {
+                window = handle;
+                return false;
+            }
+
+            return true;
+        }, IntPtr.Zero);
+
+        if (window == IntPtr.Zero) { Log.Write("--highlight: no window found"); return; }
+
+        Log.Write($"--highlight: window 0x{window.ToInt64():X}, selecting {files.Count}");
+        foreach (var file in files) Log.Write($"  asked: {file}");
+
+        var wrote = await Core.Tools.StaExecutor.RunAsync(
+            () => ShellSelection.Highlight(window, files));
+
+        Log.Write($"--highlight: wrote={wrote}");
+
+        await Task.Delay(600);
+
+        var back = await Core.Tools.StaExecutor.RunAsync(
+            () => ShellSelection.FromWindow(window));
+
+        Log.Write($"--highlight: read back {back.Count} file(s)");
+        foreach (var file in back) Log.Write($"  got: {file.Path}");
+
+        // Now a different set, to prove the old one goes away rather than being added
+        // to. This is the half that matters when a file is clicked back out of a merge:
+        // the set shrinks, and the view has to shrink with it.
+        var replacement = Directory.GetFiles(folder).Skip(2).Take(1).ToList();
+        foreach (var file in replacement) Log.Write($"  asked instead: {file}");
+
+        await Core.Tools.StaExecutor.RunAsync(
+            () => ShellSelection.Highlight(window, replacement));
+
+        await Task.Delay(600);
+
+        var after = await Core.Tools.StaExecutor.RunAsync(
+            () => ShellSelection.FromWindow(window));
+
+        Log.Write($"--highlight: after replacing, {after.Count} file(s)");
+        foreach (var file in after) Log.Write($"  got: {file.Path}");
+        Log.Write("--highlight: done");
     }
 
     private void TryShowPreview(IReadOnlyList<string> args)
@@ -627,12 +710,15 @@ public partial class App : Application
         EventHandler<DragModifierEvent>? onClicked = null;
         DispatcherTimer? giveUp = null;
 
-        // The order files were added in, which Explorer does not report: its selection
-        // comes back in the order the view is sorted. Merging is one of the few jobs
-        // where order is the whole point, so it is kept here -- anything that leaves the
-        // selection drops out, anything new goes on the end. Pick three with Ctrl and
-        // they merge in that order; plain-click a fourth and it replaces all three,
-        // because that is what a plain click did to the selection.
+        // The files picked so far, in the order they were picked -- which Explorer does
+        // not report, since a selection comes back in whatever order the view is sorted
+        // in. Merging is one of the few jobs where the order is the whole point.
+        //
+        // This list is what gets merged, and after every click it is pushed back into
+        // the view, so the highlight on screen says the same thing. That is what makes
+        // a plain click add a file instead of replacing the lot: Explorer still replaces
+        // its selection, and Satsuma puts the rest of the set straight back. The file
+        // the gesture started on stays lit the whole time, because it is in the set.
         var order = new List<string>();
 
         // Rises with every click, so a read that comes back after a newer one has
@@ -641,24 +727,75 @@ public partial class App : Application
         var subjects = new HashSet<string>(
             starting.Select(file => file.Path), StringComparer.OrdinalIgnoreCase);
 
-        IReadOnlyList<SourceFile> WithSelected(IReadOnlyList<SourceFile> selected)
+        IReadOnlyList<SourceFile> Picked() =>
+            starting.Concat(order.Select(path => new SourceFile(path))).ToList();
+
+        // How many files are going in, counting the ones the gesture started with.
+        string Caption(int extra) =>
+            extra > 0 ? $"{starting.Count + extra} files" : "Select files";
+
+        // What in a selection could join the merge: the right kind of file, and not one
+        // of the files the gesture began with -- those are in already and cannot be
+        // dropped, so a click on one is not a click on anything.
+        List<string> Mergeable(IReadOnlyList<SourceFile> selected) => selected
+            .Where(file => !file.IsDirectory
+                           && !subjects.Contains(file.Path)
+                           && string.Equals(file.Extension, wanted,
+                               StringComparison.OrdinalIgnoreCase))
+            .Select(file => file.Path)
+            .ToList();
+
+        // Folds one click's worth of selection into the set.
+        void Absorb(IReadOnlyList<SourceFile> selected, bool extending)
         {
-            var now = selected
-                .Where(file => !file.IsDirectory
-                               && !subjects.Contains(file.Path)
-                               && string.Equals(file.Extension, wanted,
-                                   StringComparison.OrdinalIgnoreCase))
-                .Select(file => file.Path)
-                .ToList();
+            var now = Mergeable(selected);
 
-            order.RemoveAll(path => !now.Contains(path, StringComparer.OrdinalIgnoreCase));
-
-            foreach (var path in now)
+            // Ctrl, Shift, or a band drawn round several files: the user asked for
+            // Explorer's own behaviour and what it arrived at is the answer.
+            if (extending || now.Count > 1)
             {
-                if (!order.Contains(path, StringComparer.OrdinalIgnoreCase)) order.Add(path);
+                order.RemoveAll(path => !now.Contains(path, StringComparer.OrdinalIgnoreCase));
+
+                foreach (var path in now)
+                {
+                    if (!order.Contains(path, StringComparer.OrdinalIgnoreCase)) order.Add(path);
+                }
+
+                return;
             }
 
-            return starting.Concat(order.Select(path => new SourceFile(path))).ToList();
+            // One file, plainly clicked: in if it was out, out if it was in. Explorer
+            // replaced its selection with it; keeping the rest of the set is what turns
+            // that into adding one, and clicking a chosen file again is how it comes
+            // back out.
+            if (now.Count == 1)
+            {
+                var path = now[0];
+                var held = order.FindIndex(
+                    picked => string.Equals(picked, path, StringComparison.OrdinalIgnoreCase));
+
+                if (held >= 0) order.RemoveAt(held);
+                else order.Add(path);
+
+                return;
+            }
+
+            // Nothing mergeable. An empty selection is the background being clicked,
+            // which is how to start the set over. Something selected that cannot join --
+            // a folder, the wrong kind of file, the file it all started from -- leaves
+            // the set alone, because a stray click should cost nothing.
+            if (selected.Count == 0) order.Clear();
+        }
+
+        // Puts the set back on screen, so the highlight and the merge agree. Kept off
+        // the UI thread's critical path: this is shell COM and can be slow.
+        void Highlight()
+        {
+            var view = window;
+            var paths = starting.Select(file => file.Path).Concat(order).ToList();
+
+            _ = Core.Tools.StaExecutor.RunAsync(
+                () => ShellSelection.Highlight(view, paths));
         }
 
         void Stop()
@@ -684,24 +821,21 @@ public partial class App : Application
 
         void Take()
         {
-            // Unwired before the read, so a second trigger arriving during it cannot
-            // start another one. The ticket moves too, so any click's read that is
-            // still in flight cannot rewrite the order underneath this final one.
-            latest++;
+            // Unwired first, so a second trigger arriving during the wait cannot start
+            // another one.
             Stop();
 
             Task.Run(async () =>
             {
-                // Long enough for a last click to have become a selection.
-                await Task.Delay(140).ConfigureAwait(false);
-
-                var selected = await Core.Tools.StaExecutor
-                    .RunAsync(() => ShellSelection.FromWindow(window))
-                    .ConfigureAwait(false);
+                // Longer than a click's own read, so a file clicked just as the key came
+                // up is in the set before the set is used. The set is the answer by now;
+                // reading Explorer here instead would see one plain click's worth of
+                // selection and mistake that for the whole pick.
+                await Task.Delay(260).ConfigureAwait(false);
 
                 await Dispatcher.BeginInvoke(() =>
                 {
-                    var files = WithSelected(selected);
+                    var files = Picked();
 
                     Log.Write($"gathered {files.Count} file(s) for {wanted}");
 
@@ -720,16 +854,25 @@ public partial class App : Application
         onBack = (_, _) => Leave(WaitEnd.Back);
         onCancelled = (_, _) => Leave(WaitEnd.Cancelled);
 
-        // Only to keep the label honest; the selection that counts is read at the end.
         onClicked = (_, click) =>
         {
             if (click.SourceWindow != IntPtr.Zero) window = click.SourceWindow;
+
+            // The press. Bring the label along before anything is read, so it is beside
+            // the file being clicked while the finger is still on it rather than a beat
+            // later. Nothing is decided here -- a press can be the start of a band.
+            if (click.ButtonDown)
+            {
+                _hint?.Reanchor(Caption(order.Count));
+                return;
+            }
 
             var reading = window;
             var ticket = ++latest;
 
             Task.Run(async () =>
             {
+                // Long enough for the click to have become a selection.
                 await Task.Delay(140).ConfigureAwait(false);
 
                 var selected = await Core.Tools.StaExecutor
@@ -738,15 +881,19 @@ public partial class App : Application
 
                 await Dispatcher.BeginInvoke(() =>
                 {
-                    if (!watcher.Waiting) return;
-
                     // Each click starts its own delayed read, so a quick second click
                     // can have its answer overtaken by the first one's -- which then
                     // rewrites the order from a selection that is already history.
                     if (ticket != latest) return;
 
-                    var count = WithSelected(selected).Count;
-                    _hint?.Say(count > starting.Count ? $"{count} files" : "Select files");
+                    Absorb(selected, click.Extending);
+
+                    // The set, back on screen. Without this the user is picking files
+                    // against a highlight that disagrees with what will be merged, and
+                    // the highlight is the only one of the two they can see.
+                    Highlight();
+
+                    _hint?.Say(Caption(order.Count));
                 });
             });
         };
@@ -770,6 +917,11 @@ public partial class App : Application
 
         if (keyHeld) _hint.Follow("Select files", ModeGlyphs.Page);
         else _hint.Anchor("Select files", ModeGlyphs.Page);
+
+        // Light up the file it all started from. The drag that got here left Explorer's
+        // selection wherever the drop put it, and the first thing the user needs to see
+        // is that the file they dragged is already in.
+        Highlight();
 
         return answered.Task;
     }

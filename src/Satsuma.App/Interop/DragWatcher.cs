@@ -30,6 +30,14 @@ public sealed record DragModifierEvent(
     /// the user their first real click.
     /// </summary>
     public bool ButtonDown { get; init; }
+
+    /// <summary>
+    /// True when Ctrl or Shift was down as the click happened, meaning the user asked
+    /// Explorer for its own selection behaviour and whatever came back is the answer.
+    /// Without a modifier the click is Satsuma's to interpret, because a plain click
+    /// while picking files to merge is meant to add one, not to replace the lot.
+    /// </summary>
+    public bool Extending { get; init; }
 }
 
 /// <summary>
@@ -93,6 +101,9 @@ public sealed class DragWatcher : IDisposable
 
     private bool _buttonDown;
     private bool _dragging;
+
+    /// <summary>A press that was a file being picked, so its release is worth reporting.</summary>
+    private bool _picking;
     private POINT _origin;
     private readonly int _thresholdX;
     private readonly int _thresholdY;
@@ -165,7 +176,19 @@ public sealed class DragWatcher : IDisposable
     /// swallowed through this, since Explorer would otherwise use it to toggle whatever
     /// is selected under the pointer.
     /// </summary>
-    public bool Waiting { get; set; }
+    public bool Waiting
+    {
+        get => _waiting;
+        set
+        {
+            _waiting = value;
+
+            // No half-finished pick survives the end of the waiting.
+            if (!value) _picking = false;
+        }
+    }
+
+    private volatile bool _waiting;
 
     /// <summary>Space is down right now.</summary>
     public bool SpaceHeld => _spaceDown;
@@ -323,11 +346,25 @@ public sealed class DragWatcher : IDisposable
                         // that was pressing it.
                         if (IsOurs(window)) break;
 
-                        Log.Write($"click while waiting at {where.X},{where.Y}");
+                        // Read here rather than on the dispatcher: by the time the event
+                        // is handled the key may well be up again.
+                        var extending = IsKeyDown(VK_CONTROL) || IsKeyDown(VK_SHIFT);
+
+                        Log.Write($"click while waiting at {where.X},{where.Y}" +
+                                  (extending ? " extending" : ""));
+
+                        // Both halves of the click are reported. The press is what moves
+                        // the label, so it happens under the hand straight away; the
+                        // release is what the selection is read from, because a press
+                        // can be the start of a rubber band rather than a pick, and only
+                        // letting go says which it was.
+                        _picking = true;
+
                         Post(() => ClickedWhileWaiting?.Invoke(this,
                             new DragModifierEvent(WheelKind.Formats,
                                 where.X, where.Y, where.X, where.Y)
-                            { SourceWindow = window }));
+                            { SourceWindow = window, Extending = extending,
+                              ButtonDown = true }));
                         break;
                     }
 
@@ -385,6 +422,32 @@ public sealed class DragWatcher : IDisposable
                     _buttonDown = false;
                     _dragging = false;
                     _armedKind = null;
+
+                    // The other half of a pick. Only when the press was one: a press on
+                    // Satsuma's own label is not, and its release must not be read as a
+                    // file having been chosen.
+                    if (_picking)
+                    {
+                        _picking = false;
+
+                        var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+                        var where = data.pt;
+                        var window = GetAncestor(WindowFromPoint(where), GA_ROOT);
+                        var extending = IsKeyDown(VK_CONTROL) || IsKeyDown(VK_SHIFT);
+
+                        // Released over our own label after pressing a file. Say nothing
+                        // about which window, so the selection is still read from the one
+                        // the press was in rather than from a window with no files in it.
+                        if (IsOurs(window)) window = IntPtr.Zero;
+
+                        Log.Write($"pick released at {where.X},{where.Y}");
+
+                        Post(() => ClickedWhileWaiting?.Invoke(this,
+                            new DragModifierEvent(WheelKind.Formats,
+                                where.X, where.Y, where.X, where.Y)
+                            { SourceWindow = window, Extending = extending }));
+                        break;
+                    }
 
                     // Nothing happens to the latched keys here. A key still down when a
                     // drag ends is the same key, still held, and it has to be let go

@@ -179,6 +179,17 @@ public static class ShellSelection
     /// </summary>
     private static IReadOnlyList<SourceFile> FromDesktopView(dynamic windows)
     {
+        var document = DesktopDocument(windows);
+        if (document is null) return Array.Empty<SourceFile>();
+
+        var found = PathsIn(document);
+        Log.Write($"desktop view: {found.Count} selected");
+        return found;
+    }
+
+    /// <summary>The desktop's shell view itself, for reading or for selecting in.</summary>
+    private static dynamic? DesktopDocument(dynamic windows)
+    {
         try
         {
             var arguments = new object?[]
@@ -203,19 +214,14 @@ public static class ShellSelection
                 culture: null,
                 namedParameters: null);
 
-            if (view is null) return Array.Empty<SourceFile>();
+            if (view is null) return null;
 
-            dynamic? document = ((dynamic)view).Document;
-            if (document is null) return Array.Empty<SourceFile>();
-
-            var found = PathsIn(document);
-            Log.Write($"desktop view: {found.Count} selected");
-            return found;
+            return ((dynamic)view).Document;
         }
         catch (Exception ex)
         {
             Log.Write($"desktop view unavailable: {ex.GetType().Name}: {ex.Message}");
-            return Array.Empty<SourceFile>();
+            return null;
         }
     }
 
@@ -246,10 +252,31 @@ public static class ShellSelection
         dynamic windows, int index, IntPtr sourceWindow, bool matchHandle,
         string? requiredFolder = null)
     {
+        var document = ViewAt(windows, index, sourceWindow, matchHandle, requiredFolder);
+        if (document is null) return Array.Empty<SourceFile>();
+
+        var files = PathsIn(document);
+
+        if (files.Count > 0) Log.Write($"  view {index}: {files.Count} selected");
+
+        return files;
+    }
+
+    /// <summary>
+    /// The shell view at an index, if it is the one being asked about.
+    ///
+    /// Separated from reading it because the selection is now written as well as read:
+    /// finding the right view is the hard part and there must not be two versions of it
+    /// that can drift apart.
+    /// </summary>
+    private static dynamic? ViewAt(
+        dynamic windows, int index, IntPtr sourceWindow, bool matchHandle,
+        string? requiredFolder = null)
+    {
         try
         {
             dynamic? window = windows.Item(index);
-            if (window is null) return Array.Empty<SourceFile>();
+            if (window is null) return null;
 
             if (matchHandle)
             {
@@ -258,13 +285,13 @@ public static class ShellSelection
                 Log.Write($"  view {index}: hwnd=0x{handle.ToInt64():X} " +
                           $"match={handle == sourceWindow}");
 
-                if (handle != sourceWindow) return Array.Empty<SourceFile>();
+                if (handle != sourceWindow) return null;
             }
 
             dynamic? document = window.Document;
-            if (document is null) return Array.Empty<SourceFile>();
+            if (document is null) return null;
 
-            if (!matchHandle && !IsDesktopView(document)) return Array.Empty<SourceFile>();
+            if (!matchHandle && !IsDesktopView(document)) return null;
 
             // Several tabs share the handle, so the folder is what identifies the one in
             // front. Without this, an inactive tab's leftover selection wins.
@@ -280,37 +307,162 @@ public static class ShellSelection
 
                 Log.Write($"  view {index}: folder='{folder}' path='{path}' active={active}");
 
-                if (!active) return Array.Empty<SourceFile>();
+                if (!active) return null;
             }
 
-            dynamic? selected = document.SelectedItems();
-            if (selected is null) return Array.Empty<SourceFile>();
-
-            var files = new List<SourceFile>();
-            foreach (dynamic item in selected)
-            {
-                string? path = item?.Path as string;
-
-                // Virtual items -- Recycle Bin entries, library roots, search results --
-                // have a display path that is not a real file.
-                if (!string.IsNullOrEmpty(path) && (File.Exists(path) || Directory.Exists(path)))
-                {
-                    files.Add(new SourceFile(path));
-                }
-            }
-
-            if (files.Count > 0)
-            {
-                Log.Write($"  view {index}: {files.Count} selected");
-            }
-
-            return files;
+            return document;
         }
         catch (Exception ex)
         {
             // Not an Explorer view, or it went away mid-read.
             Log.Write($"  view {index}: {ex.GetType().Name} {ex.Message}");
-            return Array.Empty<SourceFile>();
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Makes an Explorer window's selection be exactly these files.
+    ///
+    /// Satsuma reads the selection everywhere else; this is the one place it writes one.
+    /// Picking files to merge needs a running set -- the file that started it, plus
+    /// whatever has been clicked since -- and a set that only Satsuma knows about is
+    /// worse than no set at all, because the highlight on screen is the only copy the
+    /// user can see. So the set is pushed back into the view and the screen stays the
+    /// source of truth.
+    ///
+    /// Returns false when the view could not be found or would not take it, which is
+    /// not fatal: the caller still has its own list, it just stops being visible.
+    /// </summary>
+    public static bool Highlight(IntPtr window, IReadOnlyList<string> paths)
+    {
+        try
+        {
+            if (window == IntPtr.Zero) return false;
+
+            window = GetAncestor(window, GA_ROOT);
+            if (window == IntPtr.Zero) return false;
+
+            var className = ClassNameOf(window);
+            var isDesktop = className is "Progman" or "WorkerW";
+
+            var shellType = Type.GetTypeFromProgID("Shell.Application");
+            if (shellType is null) return false;
+
+            dynamic? shell = null;
+            try
+            {
+                shell = Activator.CreateInstance(shellType);
+                if (shell is null) return false;
+
+                dynamic windows = shell.Windows();
+                int count = windows.Count;
+                var activeFolder = WindowTitleOf(window);
+
+                for (var index = 0; index < count; index++)
+                {
+                    var view = ViewAt(windows, index, window, matchHandle: true,
+                        requiredFolder: activeFolder);
+
+                    if (view is not null) return Apply(view, paths);
+                }
+
+                if (isDesktop)
+                {
+                    var desktop = DesktopDocument(windows);
+                    if (desktop is not null) return Apply(desktop, paths);
+                }
+
+                return false;
+            }
+            finally
+            {
+                if (shell is not null) ReleaseCom(shell);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"highlight threw: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Clear what is selected, then select these, leaving the view scrolled as it is.</summary>
+    private static bool Apply(dynamic document, IReadOnlyList<string> paths)
+    {
+        dynamic? folder = document.Folder;
+        if (folder is null) return false;
+
+        var showing = FolderPathOf(document).TrimEnd('\\');
+        var selected = 0;
+
+        foreach (var path in paths)
+        {
+            // Only items this view is showing can be selected in it. A file somewhere
+            // else is not an error -- it stays in the caller's list and simply has no
+            // highlight to carry.
+            var directory = Path.GetDirectoryName(path)?.TrimEnd('\\') ?? string.Empty;
+
+            if (!string.Equals(directory, showing, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            dynamic? item;
+            try { item = folder.ParseName(Path.GetFileName(path)); }
+            catch (Exception) { continue; }
+
+            if (item is null) continue;
+
+            // The first one clears whatever was selected before, the rest add to it.
+            // It has to be done this way round: SelectItem is documented to deselect
+            // everything when handed no item at all, but passing one by reference that
+            // is not there throws before it reaches the shell, so the clearing rides
+            // along with the first real item instead.
+            //
+            // Without SVSI_ENSUREVISIBLE on purpose: scrolling the list would move the
+            // files out from under a pointer that is in the middle of picking them.
+            SelectItem(document, item,
+                selected == 0 ? SvsiSelect | SvsiDeselectOthers : SvsiSelect);
+
+            selected++;
+        }
+
+        Log.Write($"highlighted {selected} of {paths.Count} file(s) in '{showing}'");
+        return true;
+    }
+
+    private const int SvsiSelect = 0x0001;
+    private const int SvsiDeselectOthers = 0x0004;
+
+    /// <summary>
+    /// IShellFolderViewDual.SelectItem, which takes its item by reference -- so it goes
+    /// through reflection rather than the dynamic binder, which will not pass by-ref.
+    /// </summary>
+    private static void SelectItem(dynamic document, object? item, int flags)
+    {
+        try
+        {
+            var arguments = new object?[] { item, flags };
+
+            var byReference = new System.Reflection.ParameterModifier(arguments.Length);
+            byReference[0] = true;
+
+            ((object)document).GetType().InvokeMember(
+                "SelectItem",
+                System.Reflection.BindingFlags.InvokeMethod,
+                binder: null,
+                target: document,
+                args: arguments,
+                modifiers: new[] { byReference },
+                culture: null,
+                namedParameters: null);
+        }
+        catch (Exception ex)
+        {
+            // Reflection wraps whatever the shell said, so the inner one is the message
+            // that actually tells you anything.
+            var said = ex.InnerException ?? ex;
+            Log.Write($"select item failed: {said.GetType().Name}: {said.Message}");
         }
     }
 

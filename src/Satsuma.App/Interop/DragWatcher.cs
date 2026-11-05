@@ -201,8 +201,27 @@ public sealed class DragWatcher : IDisposable
     private volatile bool _movedWhileWaiting;
     private POINT _waitOrigin;
 
+    private volatile bool _movedWhileHolding;
+    private POINT _holdOrigin;
+
     /// <summary>Enough movement to mean the hand moved rather than the mouse twitched.</summary>
     private const int MovedEnough = 6;
+
+    /// <summary>A key Satsuma is watching is physically down right now.</summary>
+    private bool Holding => _spaceDown || _altDown || _latched.Count > 0;
+
+    /// <summary>
+    /// Called as a key goes down, before the state says so, to start a run of holding.
+    /// Does nothing if one is already under way, so a second key joining does not
+    /// forget what the first one has already proved.
+    /// </summary>
+    private void NoteHold()
+    {
+        if (Holding) return;
+
+        _holdOrigin = GetCursorPos(out var at) ? at : default;
+        _movedWhileHolding = false;
+    }
 
     /// <summary>
     /// True when the pointer has not moved since Satsuma started waiting, on a machine
@@ -221,8 +240,17 @@ public sealed class DragWatcher : IDisposable
     /// has both, and what matters is whether the pointer could actually be moved. A
     /// machine with no precision touchpad never has this problem at all, so it is ruled
     /// out first and a desktop never sees the handover.
+    ///
+    /// Two windows are watched, and movement in either one settles it. The waiting is
+    /// the short one -- often only the moment between a drop and a key coming up, which
+    /// a steady hand on a mouse can cross without a pixel of movement. The holding is
+    /// the long one: every key Satsuma watches, for as long as it is down, which on a
+    /// drag covers the whole journey to the wheel. A mouse moves freely through that and
+    /// proves itself; a touchpad cannot move through any of it, which is the thing being
+    /// detected.
     /// </summary>
-    public bool PointerCouldNotMove => HasPrecisionTouchpad && !_movedWhileWaiting;
+    public bool PointerCouldNotMove =>
+        HasPrecisionTouchpad && !_movedWhileWaiting && !_movedWhileHolding;
 
     /// <summary>
     /// Whether this machine has a precision touchpad, which is the only kind whose
@@ -480,7 +508,9 @@ public sealed class DragWatcher : IDisposable
                     }
 
                     // Whether the pointer has been able to move at all since Satsuma
-                    // started waiting for an answer that needs it moved.
+                    // started waiting for an answer that needs it moved, and whether it
+                    // has moved while a key was held. Either settles that it is not
+                    // being frozen. See PointerCouldNotMove.
                     if (_waiting && !_movedWhileWaiting)
                     {
                         var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
@@ -490,6 +520,18 @@ public sealed class DragWatcher : IDisposable
                         {
                             _movedWhileWaiting = true;
                             Log.Write("pointer moved while waiting");
+                        }
+                    }
+
+                    if (!_movedWhileHolding && Holding)
+                    {
+                        var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+
+                        if (Math.Abs(data.pt.X - _holdOrigin.X) > MovedEnough ||
+                            Math.Abs(data.pt.Y - _holdOrigin.Y) > MovedEnough)
+                        {
+                            _movedWhileHolding = true;
+                            Log.Write("pointer moved with a key held: not a touchpad");
                         }
                     }
 
@@ -589,6 +631,7 @@ public sealed class DragWatcher : IDisposable
                     // on the machine for the sake of a hint Satsuma could do without.
                     if (!_altDown)
                     {
+                        NoteHold();
                         _altDown = true;
                         Log.Write("alt down");
                         Post(() => ModifiersChanged?.Invoke(this, EventArgs.Empty));
@@ -597,6 +640,7 @@ public sealed class DragWatcher : IDisposable
                 else if (key == VK_SPACE)
                 {
                     var newlyDown = !_spaceDown;
+                    if (newlyDown) NoteHold();
                     _spaceDown = true;
 
                     if (newlyDown)
@@ -630,6 +674,7 @@ public sealed class DragWatcher : IDisposable
                         return Swallow;
                     }
 
+                    NoteHold();
                     _latched[key] = now;
 
                     Log.Write($"bound key 0x{key:X2} -> {wheel}, dragging={_dragging}");

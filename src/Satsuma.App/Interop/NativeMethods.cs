@@ -187,6 +187,37 @@ internal static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern int GetClassName(IntPtr hWnd, char[] lpClassName, int nMaxCount);
 
+    internal const uint WM_QUIT = 0x0012;
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MSG
+    {
+        public IntPtr hwnd;
+        public uint message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public uint time;
+        public POINT pt;
+    }
+
+    [DllImport("user32.dll")]
+    internal static extern int GetMessage(out MSG msg, IntPtr hWnd, uint min, uint max);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool TranslateMessage(ref MSG msg);
+
+    [DllImport("user32.dll")]
+    internal static extern IntPtr DispatchMessage(ref MSG msg);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool PostThreadMessage(
+        uint threadId, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll")]
+    internal static extern uint GetCurrentThreadId();
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct GUITHREADINFO
     {

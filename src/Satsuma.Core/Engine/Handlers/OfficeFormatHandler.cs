@@ -36,6 +36,22 @@ public sealed class OfficeFormatHandler : IJobHandler
     public async Task<JobResult> ExecuteAsync(
         JobRequest request, IProgress<double>? progress, CancellationToken cancellationToken)
     {
+        try
+        {
+            return await ConvertAsync(request, progress, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (LibreOfficeFailedException ex)
+        {
+            // What soffice actually said, rather than the one sentence every failure
+            // used to produce whatever had gone wrong.
+            return JobResult.Fail(ex.Message);
+        }
+    }
+
+    private static async Task<JobResult> ConvertAsync(
+        JobRequest request, IProgress<double>? progress, CancellationToken cancellationToken)
+    {
         var source = request.Files[0];
         var extension = request.Item.OutputExtension!;
 

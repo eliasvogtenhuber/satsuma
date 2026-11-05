@@ -70,8 +70,26 @@ public static class LibreOffice
         var produced = Directory.GetFiles(outputDirectory);
         if (produced.Length == 1 && new FileInfo(produced[0]).Length > 0) return produced[0];
 
-        _ = outcome;   // kept for debugging; the file is what decides
-        return null;
+        // Nothing was written, so soffice has the only account of why. It used to be
+            // discarded, which made every failure read "LibreOffice could not convert
+            // this file" whether the document was corrupt, locked, or of a kind this
+            // build has no filter for.
+        throw new LibreOfficeFailedException(Explain(outcome));
+    }
+
+    private static string Explain(ProcessOutcome outcome)
+    {
+        var said = string.Join(
+            " ",
+            (outcome.StdErr + " " + outcome.StdOut)
+                .Split('\r', '\n')
+                .Select(line => line.Trim())
+                .Where(line => line.Length > 0)
+                .TakeLast(3));
+
+        return said.Length > 0
+            ? said
+            : $"LibreOffice wrote nothing and said nothing (exit {outcome.ExitCode}).";
     }
 
     /// <summary>The extension a filter writes, which is everything before the first colon.</summary>
@@ -81,8 +99,28 @@ public static class LibreOffice
         return colon < 0 ? filter : filter[..colon];
     }
 
-    private static string ToFileUri(string path) =>
-        "file:///" + path.Replace('\\', '/').TrimStart('/');
+    /// <summary>
+    /// A file: URI soffice will accept, with the parts that need escaping escaped.
+    ///
+    /// The private profile lives under the temp path, which carries the user's name, so
+    /// it can hold spaces and umlauts. Unescaped, -env:UserInstallation either failed or
+    /// quietly put the profile somewhere else -- and a profile somewhere else is a
+    /// second instance, which is the thing the private profile exists to avoid.
+    /// </summary>
+    private static string ToFileUri(string path)
+    {
+        // Uri does this correctly and the hand-rolled version did not: escaping each
+        // segment with EscapeDataString also escapes the colon after the drive letter,
+        // so C:\ became C%3A\ and LibreOffice could not open its own profile.
+        try
+        {
+            return new Uri(System.IO.Path.GetFullPath(path)).AbsoluteUri;
+        }
+        catch (UriFormatException)
+        {
+            return "file:///" + path.Replace('\\', '/').TrimStart('/');
+        }
+    }
 
     private static string? Locate()
     {
@@ -133,6 +171,17 @@ public static class LibreOffice
 
             yield return combined;
         }
+    }
+}
+
+/// <summary>
+/// Thrown when LibreOffice ran and produced nothing, carrying whatever it said about
+/// why. Every failure used to read the same sentence regardless of cause.
+/// </summary>
+public sealed class LibreOfficeFailedException : Exception
+{
+    public LibreOfficeFailedException(string message) : base(message)
+    {
     }
 }
 

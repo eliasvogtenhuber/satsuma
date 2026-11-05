@@ -72,6 +72,9 @@ public partial class ProgressWindow : Window
 
     public void Report(JobProgress progress)
     {
+        // A report that arrives after the outcome is a report about work that is over.
+        if (_completed) return;
+
         TitleText.Text = progress.Title;
         DetailText.Text = progress.Detail ?? string.Empty;
 
@@ -85,9 +88,19 @@ public partial class ProgressWindow : Window
         if (track > 0) BarFill.Width = track * _fraction;
     }
 
+    /// <summary>
+    /// True once the card is showing an outcome, after which progress is history.
+    ///
+    /// A handler's last progress report crosses the dispatcher on its way here, so it
+    /// can arrive after the job has finished and overwrite "Did not work" with the
+    /// action's name and a filename -- a card that says a failed job succeeded.
+    /// </summary>
+    private bool _completed;
+
     /// <summary>Switches the card from progress to outcome and starts the countdown.</summary>
     public void Complete(BatchResult result, string actionLabel)
     {
+        _completed = true;
         _results = result.Outputs;
         _dismissTimer.Stop();
 

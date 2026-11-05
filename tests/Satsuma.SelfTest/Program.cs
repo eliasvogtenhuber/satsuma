@@ -773,6 +773,27 @@ internal static class Program
             ExplorerTitle.NamesFolder("papers", "papers"),
             "no decoration at all");
 
+        // Folder Options can put the whole path in the title bar. Nothing then matched
+        // the leaf name, so no view was ever accepted as the active tab and Satsuma
+        // read no selection at all for as long as the setting was on.
+        Check("a full-path title matches its folder",
+            ExplorerTitle.NamesPath(@"C:\Users\me\Pictures", @"C:\Users\me\Pictures"),
+            "full path in the title bar");
+
+        Check("and still carries a suffix",
+            ExplorerTitle.NamesPath(@"C:\Users\me\Pictures - File Explorer",
+                @"C:\Users\me\Pictures"),
+            "path plus a localised suffix");
+
+        Check("a trailing separator does not matter",
+            ExplorerTitle.NamesPath(@"C:\Users\me\Pictures", @"C:\Users\me\Pictures\"),
+            "the folder reports itself with one");
+
+        Check("a sibling path is not matched",
+            !ExplorerTitle.NamesPath(@"C:\Users\me\Pictures2 - File Explorer",
+                @"C:\Users\me\Pictures"),
+            "Pictures must not claim Pictures2");
+
         Check("nothing matches nothing",
             !ExplorerTitle.NamesFolder("", "Pictures") && !ExplorerTitle.NamesFolder("Pictures", ""),
             "empty on either side is no match");
@@ -1010,6 +1031,17 @@ internal static class Program
             var after = new FileInfo(outputs[0]).Length;
             Check("compressing shrank it", after < before, $"{Kb(before)} -> {Kb(after)}");
         }
+
+        // PNG keeps its format, and WIC's PNG encoder has no quality to turn down, so
+        // this used to hand back a same-sized file called "compressed" and say nothing.
+        var pngCompress = await Run(compress,
+            new[] { new SourceFile(source) }, FileCategory.Image);
+
+        Check("compressing a PNG says there is nothing to gain",
+            pngCompress.Outputs.Count == 0
+            && pngCompress.Failures.Count == 1
+            && pngCompress.Failures[0].Contains("JPG"),
+            pngCompress.Failures.Count > 0 ? pngCompress.Failures[0] : Describe(pngCompress));
 
         // Rotating should not also mangle the aspect ratio of a non-square image, and the
         // output format should follow the source rather than silently becoming something else.

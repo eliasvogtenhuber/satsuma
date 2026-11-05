@@ -122,8 +122,55 @@ public sealed class ImageToolHandler : IJobHandler
             .ConfigureAwait(false);
 
         progress?.Report(1.0);
+
+        // Compress keeps the source format, and the lossless ones have no quality dial
+        // for WIC to turn: a "compressed" PNG is the same pixels re-encoded, which is
+        // usually the same size and sometimes bigger. Saying so beats handing back a
+        // copy named "compressed" and letting someone discover it later.
+        if (operation == "compress" && result.Status == JobStatus.Succeeded)
+        {
+            return KeptOnlyIfSmaller(source.Path, result, extension);
+        }
+
         return result;
     }
+
+    /// <summary>
+    /// Throws away a compression that did not compress, and says what would.
+    /// </summary>
+    private static JobResult KeptOnlyIfSmaller(
+        string sourcePath, JobResult result, string extension)
+    {
+        if (result.OutputPaths.Count != 1) return result;
+
+        var written = result.OutputPaths[0];
+
+        try
+        {
+            var before = new FileInfo(sourcePath).Length;
+            var after = new FileInfo(written).Length;
+
+            if (after < before) return result;
+
+            ImagePipeline.TryDelete(written);
+
+            return Lossless.Contains(extension)
+                ? JobResult.Fail(
+                    $"{extension.TrimStart('.').ToUpperInvariant()} has no quality to trade " +
+                    "away. Convert it to JPG or WebP to make it smaller.")
+                : JobResult.Fail("Already as small as this can usefully make it.");
+        }
+        catch (Exception)
+        {
+            return result;
+        }
+    }
+
+    /// <summary>Formats whose encoders ignore a quality setting entirely.</summary>
+    private static readonly HashSet<string> Lossless = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".gif", ".bmp", ".tif", ".tiff"
+    };
 
     /// <summary>
     /// Keeps the source format when it is writable, otherwise JPG. Grayscale of a PNG

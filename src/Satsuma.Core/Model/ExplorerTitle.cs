@@ -33,4 +33,25 @@ public static class ExplorerTitle
         return title.Length == folder.Length
                || !char.IsLetterOrDigit(title[folder.Length]);
     }
+
+    /// <summary>
+    /// The same question for a window titled with a full path.
+    ///
+    /// Folder Options has a "Display the full path in the title bar" switch, and with it
+    /// on the title is C:\Users\me\Pictures rather than Pictures. Nothing then matched
+    /// the leaf name, no view was ever accepted as the active tab, and Satsuma read no
+    /// selection at all for as long as the setting was on.
+    /// </summary>
+    public static bool NamesPath(string? title, string? path)
+    {
+        if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(path)) return false;
+
+        var wanted = path.TrimEnd('\\');
+        if (wanted.Length == 0) return false;
+
+        if (!title.StartsWith(wanted, StringComparison.OrdinalIgnoreCase)) return false;
+
+        return title.Length == wanted.Length
+               || !char.IsLetterOrDigit(title[wanted.Length]);
+    }
 }

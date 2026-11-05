@@ -135,6 +135,16 @@ public static class ShellSelection
             // whether it is the desktop.
             if (isDesktop)
             {
+                // Ask for the desktop itself first. It is not in the Windows()
+                // collection -- that is Explorer windows and browser windows -- so
+                // walking the collection could only ever find an Explorer window that
+                // happened to be showing the Desktop folder, and read its selection
+                // instead of the desktop's. Files selected on the desktop therefore
+                // never registered at all, and pressing a key over them opened an
+                // empty wheel.
+                IReadOnlyList<SourceFile> onDesktop = FromDesktopView(windows);
+                if (onDesktop.Count > 0) return onDesktop;
+
                 for (var index = 0; index < count; index++)
                 {
                     IReadOnlyList<SourceFile> paths =
@@ -150,6 +160,86 @@ public static class ShellSelection
         {
             if (shell is not null) ReleaseCom(shell);
         }
+    }
+
+    /// <summary>The desktop's own shell view, which is not one of the shell windows.</summary>
+    private const int SwcDesktop = 8;
+
+    /// <summary>Ask for the view object rather than just a window handle.</summary>
+    private const int SwfoNeedDispatch = 1;
+
+    /// <summary>
+    /// What is selected on the desktop.
+    ///
+    /// IShellWindows.FindWindowSW is the documented way to reach the desktop's view:
+    /// it is the one shell view that does not appear in the collection, because it is
+    /// not a window anybody opened. Called through reflection rather than dynamic
+    /// because two of its parameters are by-reference, which the dynamic binder will
+    /// not do.
+    /// </summary>
+    private static IReadOnlyList<SourceFile> FromDesktopView(dynamic windows)
+    {
+        try
+        {
+            var arguments = new object?[]
+            {
+                Type.Missing,       // pvarLoc: no particular location
+                Type.Missing,       // pvarLocRoot
+                SwcDesktop,
+                0,                  // out: the window handle, which we do not need
+                SwfoNeedDispatch
+            };
+
+            var byReference = new System.Reflection.ParameterModifier(arguments.Length);
+            byReference[3] = true;
+
+            var view = ((object)windows).GetType().InvokeMember(
+                "FindWindowSW",
+                System.Reflection.BindingFlags.InvokeMethod,
+                binder: null,
+                target: windows,
+                args: arguments,
+                modifiers: new[] { byReference },
+                culture: null,
+                namedParameters: null);
+
+            if (view is null) return Array.Empty<SourceFile>();
+
+            dynamic? document = ((dynamic)view).Document;
+            if (document is null) return Array.Empty<SourceFile>();
+
+            var found = PathsIn(document);
+            Log.Write($"desktop view: {found.Count} selected");
+            return found;
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"desktop view unavailable: {ex.GetType().Name}: {ex.Message}");
+            return Array.Empty<SourceFile>();
+        }
+    }
+
+    /// <summary>The real files a shell view has selected.</summary>
+    private static IReadOnlyList<SourceFile> PathsIn(dynamic document)
+    {
+        dynamic? selected = document.SelectedItems();
+        if (selected is null) return Array.Empty<SourceFile>();
+
+        var files = new List<SourceFile>();
+
+        foreach (dynamic item in selected)
+        {
+            string? path = item?.Path as string;
+
+            // Virtual items -- Recycle Bin entries, library roots, search results --
+            // have a display path that is not a real file.
+            if (!string.IsNullOrEmpty(path) && (File.Exists(path) || Directory.Exists(path)))
+            {
+                files.Add(new SourceFile(path));
+            }
+        }
+
+        return files;
     }
 
     private static IReadOnlyList<SourceFile> TryReadWindow(
@@ -181,9 +271,14 @@ public static class ShellSelection
             if (requiredFolder is { Length: > 0 })
             {
                 var folder = FolderNameOf(document);
-                var active = ExplorerTitle.NamesFolder(requiredFolder, folder);
+                var path = FolderPathOf(document);
 
-                Log.Write($"  view {index}: folder='{folder}' active={active}");
+                // Either form of title: the leaf name, or the full path when Folder
+                // Options is set to show one.
+                var active = ExplorerTitle.NamesFolder(requiredFolder, folder)
+                             || ExplorerTitle.NamesPath(requiredFolder, path);
+
+                Log.Write($"  view {index}: folder='{folder}' path='{path}' active={active}");
 
                 if (!active) return Array.Empty<SourceFile>();
             }
@@ -216,6 +311,19 @@ public static class ShellSelection
             // Not an Explorer view, or it went away mid-read.
             Log.Write($"  view {index}: {ex.GetType().Name} {ex.Message}");
             return Array.Empty<SourceFile>();
+        }
+    }
+
+    /// <summary>The full path a shell view is showing, for a title that carries one.</summary>
+    private static string FolderPathOf(dynamic document)
+    {
+        try
+        {
+            return document.Folder?.Self?.Path as string ?? string.Empty;
+        }
+        catch (Exception)
+        {
+            return string.Empty;
         }
     }
 

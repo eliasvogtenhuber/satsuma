@@ -179,9 +179,48 @@ public sealed class DragWatcher : IDisposable
     /// <summary>Space came up. Letting go is the answer to "where?", so it is an event.</summary>
     public event EventHandler? SpaceReleased;
 
+    private Thread? _pump;
+    private uint _pumpThreadId;
+    private Exception? _installFailure;
+
+    /// <summary>
+    /// Installs the hooks on a thread of their own.
+    ///
+    /// A low-level hook is called on the thread that installed it, and that thread has
+    /// to be pumping messages to be called at all. On the UI thread that means every
+    /// keystroke and mouse move on the machine -- not Satsuma's, the machine's --
+    /// queues behind whatever WPF is doing, so a shell read or a screen capture shows
+    /// up as the pointer stuttering system-wide.
+    ///
+    /// Worse, a callback that takes longer than LowLevelHooksTimeout is skipped for
+    /// that event, which can lose a key-up and leave a latch stuck; and Windows is
+    /// documented as removing a hook that keeps timing out, after which Satsuma stops
+    /// answering its keys and only a restart brings it back.
+    ///
+    /// This thread does nothing but pump. The callbacks set fields and hand everything
+    /// real to the dispatcher, so there is nothing here to block on.
+    /// </summary>
     public void Start()
     {
-        if (_mouseHook != IntPtr.Zero) return;
+        if (_pump is not null) return;
+
+        var ready = new ManualResetEventSlim(false);
+
+        _pump = new Thread(() => Pump(ready))
+        {
+            IsBackground = true,
+            Name = "Satsuma input hooks"
+        };
+
+        _pump.Start();
+        ready.Wait(TimeSpan.FromSeconds(5));
+
+        if (_installFailure is not null) throw _installFailure;
+    }
+
+    private void Pump(ManualResetEventSlim ready)
+    {
+        _pumpThreadId = GetCurrentThreadId();
 
         // Low-level hooks take a module handle but are not injected, so any valid one
         // works; passing the current module is the documented form.
@@ -190,21 +229,57 @@ public sealed class DragWatcher : IDisposable
         _mouseHook = SetWindowsHookEx(WH_MOUSE_LL, _mouseProc, module, 0);
         _keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardProc, module, 0);
 
-        Log.Write($"hooks installed: mouse={_mouseHook != IntPtr.Zero}, " +
-                  $"keyboard={_keyboardHook != IntPtr.Zero}");
+        Log.Write($"hooks installed on thread {_pumpThreadId}: " +
+                  $"mouse={_mouseHook != IntPtr.Zero}, keyboard={_keyboardHook != IntPtr.Zero}");
         Log.Write("bound keys: " +
                   string.Join(", ", _keyMap.Select(pair => $"0x{pair.Key:X2}={pair.Value}")));
         Log.Write($"drag threshold: {_thresholdX}x{_thresholdY}");
 
         if (_mouseHook == IntPtr.Zero || _keyboardHook == IntPtr.Zero)
         {
-            throw new InvalidOperationException(
+            _installFailure = new InvalidOperationException(
                 "Satsuma could not install its input hooks. " +
                 $"Last error: {Marshal.GetLastWin32Error()}.");
+
+            ready.Set();
+            return;
         }
+
+        ready.Set();
+
+        // Nothing is posted here except the WM_QUIT that ends it, but the loop has to
+        // exist: without one the thread never services the hooks it owns.
+        while (GetMessage(out var message, IntPtr.Zero, 0, 0) > 0)
+        {
+            TranslateMessage(ref message);
+            DispatchMessage(ref message);
+        }
+
+        Unhook();
     }
 
     public void Stop()
+    {
+        var thread = _pump;
+        _pump = null;
+
+        if (thread is null)
+        {
+            Unhook();
+            return;
+        }
+
+        // Ends the loop, which unhooks on the thread that installed them -- which is
+        // the only thread allowed to.
+        if (_pumpThreadId != 0)
+        {
+            PostThreadMessage(_pumpThreadId, WM_QUIT, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        if (!thread.Join(TimeSpan.FromSeconds(2))) Unhook();
+    }
+
+    private void Unhook()
     {
         if (_mouseHook != IntPtr.Zero)
         {
@@ -343,14 +418,14 @@ public sealed class DragWatcher : IDisposable
                         return Swallow;   // the drag source must not also see the Escape
                     }
                 }
-                else if (_backKeys.Contains(key) && Waiting)
+                else if (_backKeys.Contains(key) && Waiting && OverShell())
                 {
                     // Backs out of the waiting and puts the wheel up again. Swallowed
                     // like the wheel keys, or Explorer takes it as type-ahead.
                     Post(() => BackRequested?.Invoke(this, EventArgs.Empty));
                     return Swallow;
                 }
-                else if (key == VK_RETURN && Waiting)
+                else if (key == VK_RETURN && Waiting && OverShell())
                 {
                     // The way out of a gathering. Swallowed, or Explorer opens whatever
                     // the user just finished clicking.
@@ -384,7 +459,7 @@ public sealed class DragWatcher : IDisposable
                     // space repeats, and in Explorer each repeat toggles whatever has
                     // focus, so the folder the user is about to click would be fighting
                     // the key they are holding to choose it with.
-                    if (_dragging || WheelOpen || Waiting) return Swallow;
+                    if (ShouldHoldSpace()) return Swallow;
                 }
                 else if (_keyMap.TryGetValue(key, out var wheel))
                 {
@@ -493,7 +568,7 @@ public sealed class DragWatcher : IDisposable
 
                     // Matched to the swallowed press, or whatever has focus sees a
                     // release it never saw the press for.
-                    if (wasDown && (_dragging || WheelOpen || Waiting)) return Swallow;
+                    if (wasDown && ShouldHoldSpace()) return Swallow;
                 }
 
                 // The only thing that unlatches a key. Letting go is the whole gesture.
@@ -529,6 +604,28 @@ public sealed class DragWatcher : IDisposable
     /// press was synthesised rather than typed.
     /// </summary>
     private static bool IsAlt(int key) => key is VK_MENU or VK_LMENU or VK_RMENU;
+
+    /// <summary>True when the window in front is Explorer or the Desktop.</summary>
+    private static bool OverShell() => IsShellWindow(GetForegroundWindow());
+
+    /// <summary>
+    /// Whether this Space press is Satsuma's to take.
+    ///
+    /// It used to be taken during any left-button drag at all, anywhere: a game where
+    /// you hold fire and tap Space to jump, a design tool where Space pans, both lost
+    /// the key -- and lost the key-up too, which can leave an app believing Space is
+    /// still down. Satsuma only means anything by it over a file manager, so that is
+    /// where it takes it.
+    /// </summary>
+    private bool ShouldHoldSpace()
+    {
+        if (!_dragging && !WheelOpen && !Waiting) return false;
+
+        // A wheel of Satsuma's own is on screen; the key is certainly meant for it.
+        if (WheelOpen) return true;
+
+        return OverShell();
+    }
 
     /// <summary>
     /// Forgets latched keys that have gone quiet for long enough to have been let go.

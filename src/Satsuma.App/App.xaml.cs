@@ -890,22 +890,25 @@ public partial class App : Application
         {
             // Letting go of the wheel key is what finishes a merge that was begun by
             // dragging -- once there is something to finish.
-            if (order.Count > 0)
+            //
+            // Nothing picked and a pointer that has moved since the picking began means
+            // the user could have clicked a file and did not: a change of mind, and
+            // letting go means what it says.
+            if (order.Count > 0 || !watcher.PointerCouldNotMove)
             {
                 Take();
                 return;
             }
 
-            // Nothing picked yet, so the key was let go before the picking rather than
-            // after it. On a laptop that is not a change of mind: Windows suppresses
-            // precision-touchpad movement for as long as any key is held, so with the
-            // wheel key down the pointer cannot reach a second file at all and letting
-            // go is the only way to get it back. Ending here would make merging by
-            // touchpad impossible, so it hands over to the clickable form instead --
+            // Nothing picked, and the pointer has not moved a pixel since the picking
+            // began -- so it was never free to reach a second file. Windows suppresses
+            // precision-touchpad movement for as long as any key is held, and letting
+            // go is the only way to get the pointer back. Ending here would make merging
+            // by touchpad impossible, so it hands over to the clickable form instead --
             // the same handover that picking a folder already does.
             watcher.WheelKeyReleased -= onReleased;
 
-            Log.Write("wheel key let go with nothing picked: handing over to the tick");
+            Log.Write("wheel key let go, pointer never free: handing over to the tick");
 
             _hint?.Anchor(Caption(0), Mark());
         };
@@ -1101,8 +1104,25 @@ public partial class App : Application
                         return;
                     }
 
-                    // Nothing chosen yet, and now the pointer is free to choose.
+                    // Nothing chosen, and the pointer has been free the whole time: they
+                    // could have pointed at a folder and did not, which is the plainest
+                    // way of asking for a new one. Making it here rather than handing
+                    // over is what keeps that a single gesture for a mouse.
+                    if (!watcher.PointerCouldNotMove)
+                    {
+                        Log.Write("space let go with the pointer free: making a folder");
+
+                        Stop();
+                        answered.TrySetResult((WaitEnd.Done, null));
+                        return;
+                    }
+
+                    // Nothing chosen yet, and now the pointer is free to choose. It was
+                    // not before: a held key freezes a precision touchpad, so this is
+                    // the first moment a folder can be reached at all.
                     handedOver = true;
+
+                    Log.Write("space let go, pointer never free: handing over to the tick");
 
                     giveUp?.Stop();
                     _hint?.Anchor("Pick a folder", ModeGlyphs.Folder);

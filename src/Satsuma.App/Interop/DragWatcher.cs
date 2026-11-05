@@ -184,11 +184,72 @@ public sealed class DragWatcher : IDisposable
             _waiting = value;
 
             // No half-finished pick survives the end of the waiting.
-            if (!value) _picking = false;
+            if (!value)
+            {
+                _picking = false;
+                return;
+            }
+
+            // Where the pointer stood when the waiting began, so a key being let go can
+            // be told apart from a change of mind. See PointerCouldNotMove.
+            _movedWhileWaiting = false;
+            _waitOrigin = GetCursorPos(out var at) ? at : default;
         }
     }
 
     private volatile bool _waiting;
+    private volatile bool _movedWhileWaiting;
+    private POINT _waitOrigin;
+
+    /// <summary>Enough movement to mean the hand moved rather than the mouse twitched.</summary>
+    private const int MovedEnough = 6;
+
+    /// <summary>
+    /// True when the pointer has not moved since Satsuma started waiting, on a machine
+    /// where a held key is the likely reason it has not.
+    ///
+    /// This is what tells "I let go because I had decided" apart from "I let go because
+    /// it was the only way to move the pointer again". Windows suppresses precision-
+    /// touchpad movement for as long as any key is held -- accidental activation
+    /// prevention, on by default -- so on a laptop the answer Satsuma is waiting for
+    /// cannot be given until the key is released, and a release has to hand over rather
+    /// than end the gesture. With a mouse the pointer was never stuck, the user moved it
+    /// and chose not to pick anything, and letting go means what it says.
+    ///
+    /// Asked this way round, rather than by working out which device the input came
+    /// from, because the device is the wrong question: a laptop with a mouse plugged in
+    /// has both, and what matters is whether the pointer could actually be moved. A
+    /// machine with no precision touchpad never has this problem at all, so it is ruled
+    /// out first and a desktop never sees the handover.
+    /// </summary>
+    public bool PointerCouldNotMove => HasPrecisionTouchpad && !_movedWhileWaiting;
+
+    /// <summary>
+    /// Whether this machine has a precision touchpad, which is the only kind whose
+    /// driver suppresses movement while a key is held. Windows keeps its settings under
+    /// this key and creates it for no other sort of pointing device.
+    /// </summary>
+    public static bool HasPrecisionTouchpad { get; } = LookForTouchpad();
+
+    private static bool LookForTouchpad()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\PrecisionTouchPad");
+
+            var found = key is not null;
+            Log.Write($"precision touchpad: {(found ? "present" : "none")}");
+            return found;
+        }
+        catch (Exception ex)
+        {
+            // Unreadable: assume there is one, since handing over costs a click and
+            // not handing over can make the gesture impossible to complete.
+            Log.Write($"touchpad check failed: {ex.GetType().Name}: {ex.Message}");
+            return true;
+        }
+    }
 
     /// <summary>Space is down right now.</summary>
     public bool SpaceHeld => _spaceDown;
@@ -226,6 +287,10 @@ public sealed class DragWatcher : IDisposable
     public void Start()
     {
         if (_pump is not null) return;
+
+        // Looked up now rather than in the middle of a gesture, so the answer is in the
+        // log from the start: it decides whether letting a key go hands over or ends.
+        _ = HasPrecisionTouchpad;
 
         var ready = new ManualResetEventSlim(false);
 
@@ -413,6 +478,21 @@ public sealed class DragWatcher : IDisposable
                             Log.Write("drag detected");
                         }
                     }
+
+                    // Whether the pointer has been able to move at all since Satsuma
+                    // started waiting for an answer that needs it moved.
+                    if (_waiting && !_movedWhileWaiting)
+                    {
+                        var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+
+                        if (Math.Abs(data.pt.X - _waitOrigin.X) > MovedEnough ||
+                            Math.Abs(data.pt.Y - _waitOrigin.Y) > MovedEnough)
+                        {
+                            _movedWhileWaiting = true;
+                            Log.Write("pointer moved while waiting");
+                        }
+                    }
+
                     break;
                 }
 

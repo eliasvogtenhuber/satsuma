@@ -29,6 +29,7 @@ public static class QuickActions
                 "act.terminal" => OpenTerminal(files),
                 "act.move" => SendTo(files, keepOriginal: false),
                 "act.copyto" => SendTo(files, keepOriginal: true),
+                "act.dupe" => Duplicate(files),
                 "act.float" => Float(files, onFloat),
                 _ => new ActionOutcome(false, $"Unknown action {actionId}.")
             };
@@ -189,6 +190,62 @@ public static class QuickActions
         }
 
         return new ActionOutcome(true, done == 1 ? past : $"{past} {done} items");
+    }
+
+    /// <summary>
+    /// A second copy beside the original: Copy to with the folder question answered.
+    ///
+    /// Named the way every result Satsuma writes is named, through the same collision
+    /// logic, so report.pdf duplicates to report-dupe.pdf and again to
+    /// report-dupe (2).pdf. Nothing is ever written over.
+    ///
+    /// Folders duplicate too, whole. A folder keeps its entire name -- one called
+    /// "my.notes" is not a file called "my" -- which is why the stem and the extension
+    /// are split here rather than left to the naming helper.
+    /// </summary>
+    private static ActionOutcome Duplicate(IReadOnlyList<SourceFile> files)
+    {
+        var done = 0;
+        var failures = new List<string>();
+
+        foreach (var file in files)
+        {
+            try
+            {
+                var path = file.Path.TrimEnd(
+                    Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+                var parent = Path.GetDirectoryName(path);
+
+                if (string.IsNullOrEmpty(parent))
+                {
+                    failures.Add($"{file.Name}: nothing to duplicate into");
+                    continue;
+                }
+
+                var stem = file.IsDirectory
+                    ? Path.GetFileName(path)
+                    : Path.GetFileNameWithoutExtension(path);
+
+                var extension = file.IsDirectory ? string.Empty : Path.GetExtension(path);
+
+                var target = Core.Util.OutputNaming.NextIn(parent, stem, extension, "dupe");
+
+                Core.Util.Delivery.CopyTo(file.Path, target);
+                done++;
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{file.Name}: {ex.Message}");
+            }
+        }
+
+        if (failures.Count > 0)
+        {
+            return new ActionOutcome(done > 0, $"Duplicated {done}, {failures.Count} failed");
+        }
+
+        return new ActionOutcome(true, done == 1 ? "Duplicated" : $"Duplicated {done} items");
     }
 
     private static ActionOutcome Float(

@@ -25,6 +25,13 @@ public static class ActionCatalog
         // parent. Folding the two together would save a slice and cost a step, and the
         // step is the whole thing Satsuma is trying not to charge for.
         new WheelItem("act.copyto", "Copy to", WheelKind.Actions, Hint: "Pick a folder"),
+
+        // Copy to without the folder question, which is the case it is nearly always
+        // asked for: a second copy right here, to edit while the first one stays as it
+        // was. Named like every other result Satsuma writes -- report.pdf duplicates to
+        // report-dupe.pdf -- so the copy says what it is in the only place you will be
+        // looking at it.
+        new WheelItem("act.dupe", "Duplicate", WheelKind.Actions, Hint: "Beside the original"),
         new WheelItem("act.path", "Copy path", WheelKind.Actions),
         new WheelItem("act.terminal", "Terminal", WheelKind.Actions, Hint: "Open here"),
     };

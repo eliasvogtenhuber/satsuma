@@ -25,7 +25,10 @@ public static class OutputNaming
     /// <summary>As <see cref="Next"/>, but into a directory you choose.</summary>
     public static string NextIn(string directory, string baseName, string extension, string? suffix = null)
     {
-        if (!extension.StartsWith('.')) extension = "." + extension;
+        // An empty extension stays empty. It used to become a bare ".", which is how a
+        // folder being moved or copied asked for "folder." and got away with it only
+        // because Win32 quietly drops a trailing dot.
+        if (extension.Length > 0 && !extension.StartsWith('.')) extension = "." + extension;
 
         var stem = string.IsNullOrEmpty(suffix) ? baseName : $"{baseName}-{suffix}";
         stem = Sanitize(stem);

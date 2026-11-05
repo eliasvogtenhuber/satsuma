@@ -46,6 +46,7 @@ internal static class Program
             TestExplorerTitles();
             TestHitTesting();
             await TestWheelBuilding(workspace);
+            await TestNaming(workspace);
             await TestImages(workspace);
             await TestImageTools(workspace);
             await TestPdf(workspace);
@@ -902,6 +903,57 @@ internal static class Program
         var unknown = Runner.BuildWheel(WheelKind.Formats, FileCategory.Unknown,
             new[] { new SourceFile(Path.Combine(workspace, "x.wat")) });
         Check("unknown files offer nothing", unknown.Count == 0, "no slices");
+
+        Check("duplicate is on the actions wheel",
+            actions.Any(a => a.Id == "act.dupe"),
+            "act.dupe offered");
+
+        return Task.CompletedTask;
+    }
+
+    // ---- Naming -----------------------------------------------------------
+
+    private static Task TestNaming(string workspace)
+    {
+        Section("Naming");
+
+        var folder = Path.Combine(workspace, "naming");
+        Directory.CreateDirectory(folder);
+
+        // What Duplicate asks for, which is also the shape every other written result
+        // takes. The suffix is part of the name rather than a counter, so the copy says
+        // what it is in the one place it will be looked at.
+        var first = OutputNaming.NextIn(folder, "report", ".pdf", "dupe");
+        Check("duplicate names itself", Path.GetFileName(first) == "report-dupe.pdf",
+            Path.GetFileName(first));
+
+        File.WriteAllText(first, "x");
+
+        var second = OutputNaming.NextIn(folder, "report", ".pdf", "dupe");
+        Check("a second duplicate steps aside",
+            Path.GetFileName(second) == "report-dupe (2).pdf",
+            Path.GetFileName(second));
+
+        File.WriteAllText(second, "x");
+
+        var third = OutputNaming.NextIn(folder, "report", ".pdf", "dupe");
+        Check("and a third", Path.GetFileName(third) == "report-dupe (3).pdf",
+            Path.GetFileName(third));
+
+        // A folder has no extension to add, and a bare "." used to be added anyway.
+        var directory = OutputNaming.NextIn(folder, "photos", string.Empty, "dupe");
+        Check("no extension means no dot", Path.GetFileName(directory) == "photos-dupe",
+            Path.GetFileName(directory));
+
+        // An extension without its dot is still an extension.
+        var bare = OutputNaming.NextIn(folder, "notes", "txt");
+        Check("a dotless extension is accepted", Path.GetFileName(bare) == "notes.txt",
+            Path.GetFileName(bare));
+
+        // Nothing Satsuma writes ever lands on something that is already there.
+        Check("every name handed back was free",
+            first != second && second != third,
+            "three distinct names");
 
         return Task.CompletedTask;
     }

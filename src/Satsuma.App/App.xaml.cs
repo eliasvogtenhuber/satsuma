@@ -121,6 +121,7 @@ public partial class App : Application
             TryShelf(e.Args);
             TryHint(e.Args);
             TryHighlight(e.Args);
+            TryDuplicate(e.Args);
         }, DispatcherPriority.Normal);
 
         _closeAfterDrag = new DispatcherTimer
@@ -399,6 +400,57 @@ public partial class App : Application
         Log.Write($"--highlight: after replacing, {after.Count} file(s)");
         foreach (var file in after) Log.Write($"  got: {file.Path}");
         Log.Write("--highlight: done");
+    }
+
+    /// <summary>
+    /// --dupe &lt;path&gt;...: duplicates each path and says what landed.
+    ///
+    /// The naming is covered by the self-test, which cannot reach this project; what is
+    /// left to check is that a real file and a real folder both come out the other side
+    /// whole, and that a second run steps aside rather than writing over the first.
+    /// </summary>
+    private void TryDuplicate(IReadOnlyList<string> args)
+    {
+        var flag = args.ToList().FindIndex(a =>
+            a.Equals("--dupe", StringComparison.OrdinalIgnoreCase));
+
+        if (flag < 0 || args.Count <= flag + 1) return;
+
+        var paths = args.Skip(flag + 1)
+            .Where(path => File.Exists(path) || Directory.Exists(path))
+            .Select(path => new SourceFile(path))
+            .ToList();
+
+        if (paths.Count == 0) { Log.Write("--dupe: nothing there"); return; }
+
+        foreach (var file in paths)
+        {
+            Log.Write($"--dupe: asked for {file.Name} (directory={file.IsDirectory})");
+        }
+
+        var outcome = Actions.QuickActions.Run("act.dupe", paths, _ => { });
+
+        Log.Write($"--dupe: {outcome.Succeeded} '{outcome.Message}'");
+
+        // What is actually on disk now, which is the only answer that counts.
+        foreach (var directory in paths
+                     .Select(file => Path.GetDirectoryName(
+                         file.Path.TrimEnd(Path.DirectorySeparatorChar)) ?? string.Empty)
+                     .Where(path => path.Length > 0)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            foreach (var entry in Directory.GetFileSystemEntries(directory))
+            {
+                var what = Directory.Exists(entry) ? "dir " : "file";
+                var size = Directory.Exists(entry)
+                    ? Directory.GetFileSystemEntries(entry, "*", SearchOption.AllDirectories).Length
+                    : new FileInfo(entry).Length;
+
+                Log.Write($"--dupe:   {what} {Path.GetFileName(entry)} ({size})");
+            }
+        }
+
+        Log.Write("--dupe: done");
     }
 
     private void TryShowPreview(IReadOnlyList<string> args)

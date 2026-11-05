@@ -73,11 +73,17 @@ jobs:
         run: |
           $version = '${{ steps.version.outputs.version }}'
           $existing = gh release view "v$version" --json id 2>$null
+          $found = $LASTEXITCODE -eq 0
 
-          if ($LASTEXITCODE -eq 0 -and $existing) {
+          if ($found -and $existing) {
             throw "v$version has already been released. Releases are written once: " +
                   "cut a new version rather than moving this tag."
           }
+
+          # gh exits 1 when the release does not exist, which is the good case here --
+          # but a pwsh step fails on a non-zero $LASTEXITCODE whatever it meant, so the
+          # guard reported "v0.1.2 is new" and then failed the build anyway.
+          $global:LASTEXITCODE = 0
 
           Write-Host "v$version is new."
 

@@ -66,6 +66,11 @@ public partial class CursorHintWindow : Window
 
         if (!IsVisible) Show();
 
+        // After Show, not before: a window that has never been shown measures to
+        // something other than what it settles at, and the first label came out a row
+        // taller than every one after it.
+        UpdateLayout();
+
         PlaceAtCursor();
         _follow.Start();
     }
@@ -82,14 +87,14 @@ public partial class CursorHintWindow : Window
         Accept.Visibility = Visibility.Visible;
         Tick.Data = ModeGlyphs.Tick;
 
-        // Measure again: Fill's pass ran before the tick was visible, so the first
-        // placement came out a row taller than every later one.
-        UpdateLayout();
-
         _follow.Stop();
         SetClickThrough(false);
 
         if (!IsVisible) Show();
+
+        // After Show, and after the tick was made visible: Fill's own pass saw neither,
+        // and the first label came out a row taller than every one after it.
+        UpdateLayout();
 
         PlaceAtCursor();
     }
@@ -141,6 +146,33 @@ public partial class CursorHintWindow : Window
         PlaceAtCursor();
     }
 
+    /// <summary>
+    /// Swaps the mark without moving or re-wording anything.
+    ///
+    /// Space and Alt can be taken up and let go in the middle of picking files, and the
+    /// whole point of holding a key is to see what it is doing while you hold it. The
+    /// mark is the whole indicator, in the same thin stroke as the ones on the wheel: a
+    /// folder for somewhere else, two arrows passing for over the top. No wording,
+    /// because the caption is already counting files and a line of prose about a key the
+    /// user is holding down tells them something they just did.
+    /// </summary>
+    public void Mark(Geometry? glyph)
+    {
+        if (ReferenceEquals(Glyph.Data, glyph)) return;
+
+        Glyph.Data = glyph;
+        Glyph.Visibility = glyph is null ? Visibility.Collapsed : Visibility.Visible;
+
+        UpdateLayout();
+
+        // Same reason Say does not move: a mark changing under a finger that is pressing
+        // the tick must not take the tick with it.
+        if (_follow.IsEnabled) return;
+        if (_anchor is not { } spot) return;
+
+        PlaceAt(spot.X, spot.Y);
+    }
+
     public void Dismiss()
     {
         _follow.Stop();
@@ -166,8 +198,7 @@ public partial class CursorHintWindow : Window
         if (!GetCursorPos(out var cursor)) return;
 
         var scale = DpiAt(cursor) / 96.0;
-        var width = (int)Math.Round(ActualWidth * scale);
-        var height = (int)Math.Round(ActualHeight * scale);
+        var (width, height) = SizeAt(scale);
 
         if (width <= 0 || height <= 0) return;
 
@@ -199,11 +230,32 @@ public partial class CursorHintWindow : Window
     /// <summary>Where an anchored label was put, so it can be left there.</summary>
     private (int X, int Y)? _anchor;
 
+    /// <summary>
+    /// The pill's size in device pixels, measured on the Border rather than on the
+    /// Window.
+    ///
+    /// A window that has not been shown yet reports a height it does not keep -- 35.5
+    /// against the 30 it settles at -- so the first label of a session came out a row
+    /// taller than every one after it, and no amount of asking for the layout again
+    /// before placing it helped. The Border is the whole of the content, has a fixed
+    /// height, and measures the same every time; once the window has settled the two
+    /// are identical, so nothing is clipped by going from one to the other.
+    /// </summary>
+    private (int Width, int Height) SizeAt(double scale)
+    {
+        var width = Pill.ActualWidth > 0 ? Pill.ActualWidth : Pill.DesiredSize.Width;
+        var height = Pill.ActualHeight > 0 ? Pill.ActualHeight : Pill.DesiredSize.Height;
+
+        if (width <= 0) width = ActualWidth;
+        if (height <= 0) height = ActualHeight;
+
+        return ((int)Math.Round(width * scale), (int)Math.Round(height * scale));
+    }
+
     private void PlaceAt(int left, int top)
     {
         var scale = DpiAt(new POINT(left, top)) / 96.0;
-        var width = (int)Math.Round(ActualWidth * scale);
-        var height = (int)Math.Round(ActualHeight * scale);
+        var (width, height) = SizeAt(scale);
 
         if (width <= 0 || height <= 0) return;
 

@@ -297,6 +297,22 @@ public partial class App : Application
             _hint.Say(caption);
         }
 
+        // And the marks, which change while the label is up because Space and Alt can
+        // be taken up and let go in the middle of picking. Same rule as the captions:
+        // the label must not move, or the tick walks out from under the finger.
+        foreach (var (name, glyph) in new (string, System.Windows.Media.Geometry)[]
+                 {
+                     ("folder", ModeGlyphs.Folder),
+                     ("replace", ModeGlyphs.Replace),
+                     ("page", ModeGlyphs.Page)
+                 })
+        {
+            await Task.Delay(500);
+
+            Log.Write($"--hint: marking '{name}'");
+            _hint.Mark(glyph);
+        }
+
         await Task.Delay(800);
 
         Log.Write("--hint: done");
@@ -596,7 +612,8 @@ public partial class App : Application
         // are can change what a typed value would mean.
         if (choice.Item.Gathers && choice.Files.Count < 2)
         {
-            var (end, gathered) = await GatherMoreAsync(choice.Files, holding, source);
+            var (end, gathered, going) =
+                await GatherMoreAsync(choice.Files, holding, source);
 
             if (end == WaitEnd.Back)
             {
@@ -605,6 +622,12 @@ public partial class App : Application
             }
 
             if (end != WaitEnd.Done) return;
+
+            // Picking the files is the gesture here, so what is being held when that
+            // ends is what says where the result goes. The reading taken at the drop was
+            // of a hand that was still holding a mouse button and a wheel key and had
+            // not chosen anything yet.
+            destination = going;
 
             choice = choice with { Files = gathered };
         }
@@ -684,18 +707,19 @@ public partial class App : Application
     /// ended the one before it. With no key down -- a wheel opened by clicking -- there
     /// is no such moment, so the label grows a tick and Enter works too.
     /// </summary>
-    private Task<(WaitEnd End, IReadOnlyList<SourceFile> Files)> GatherMoreAsync(
-        IReadOnlyList<SourceFile> starting, bool keyHeld, IntPtr source)
+    private Task<(WaitEnd End, IReadOnlyList<SourceFile> Files, Destination Where)>
+        GatherMoreAsync(IReadOnlyList<SourceFile> starting, bool keyHeld, IntPtr source)
     {
         var watcher = _watcher;
 
         if (watcher is null)
         {
-            return Task.FromResult((WaitEnd.Cancelled, starting));
+            return Task.FromResult((WaitEnd.Cancelled, starting, Destination.Beside));
         }
 
-        var answered = new TaskCompletionSource<(WaitEnd, IReadOnlyList<SourceFile>)>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
+        var answered =
+            new TaskCompletionSource<(WaitEnd, IReadOnlyList<SourceFile>, Destination)>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
 
         // Only more of the same kind. Merging a PDF with a spreadsheet is not a thing,
         // and a stray click on the wrong file should cost nothing.
@@ -707,6 +731,7 @@ public partial class App : Application
         EventHandler? onBack = null;
         EventHandler? onCancelled = null;
         EventHandler? onAccepted = null;
+        EventHandler? onModifiers = null;
         EventHandler<DragModifierEvent>? onClicked = null;
         DispatcherTimer? giveUp = null;
 
@@ -733,6 +758,11 @@ public partial class App : Application
         // How many files are going in, counting the ones the gesture started with.
         string Caption(int extra) =>
             extra > 0 ? $"{starting.Count + extra} files" : "Select files";
+
+        // The mark the label carries: whichever destination is being held, or the sheet
+        // of paper that just means "which files" when nothing is.
+        System.Windows.Media.Geometry Mark() =>
+            ModeGlyphs.For(AskedForDestination()) ?? ModeGlyphs.Page;
 
         // What in a selection could join the merge: the right kind of file, and not one
         // of the files the gesture began with -- those are in already and cannot be
@@ -806,6 +836,7 @@ public partial class App : Application
             watcher.BackRequested -= onBack;
             watcher.Cancelled -= onCancelled;
             watcher.ClickedWhileWaiting -= onClicked;
+            watcher.ModifiersChanged -= onModifiers;
 
             giveUp?.Stop();
 
@@ -816,11 +847,17 @@ public partial class App : Application
         void Leave(WaitEnd end)
         {
             Stop();
-            answered.TrySetResult((end, starting));
+            answered.TrySetResult((end, starting, Destination.Beside));
         }
 
         void Take()
         {
+            // Where the results go, read here because here is the moment it means
+            // something. For everything else that moment is the drop; for a merge the
+            // drop is only where the picking starts, and Space or Alt held through the
+            // picking is what the user let go of last.
+            var going = AskedForDestination();
+
             // Unwired first, so a second trigger arriving during the wait cannot start
             // another one.
             Stop();
@@ -837,18 +874,41 @@ public partial class App : Application
                 {
                     var files = Picked();
 
-                    Log.Write($"gathered {files.Count} file(s) for {wanted}");
+                    Log.Write(
+                        $"gathered {files.Count} file(s) for {wanted}, going {going}");
 
-                    // Let go having selected nothing: they changed their mind, and one
-                    // file is not something that can be merged anyway.
+                    // Nothing picked: there is no merge to do, and one file is not
+                    // something that can be merged anyway.
                     answered.TrySetResult(files.Count > starting.Count
-                        ? (WaitEnd.Done, files)
-                        : (WaitEnd.Cancelled, starting));
+                        ? (WaitEnd.Done, files, going)
+                        : (WaitEnd.Cancelled, starting, going));
                 });
             });
         }
 
-        onReleased = (_, _) => Take();
+        onReleased = (_, _) =>
+        {
+            // Letting go of the wheel key is what finishes a merge that was begun by
+            // dragging -- once there is something to finish.
+            if (order.Count > 0)
+            {
+                Take();
+                return;
+            }
+
+            // Nothing picked yet, so the key was let go before the picking rather than
+            // after it. On a laptop that is not a change of mind: Windows suppresses
+            // precision-touchpad movement for as long as any key is held, so with the
+            // wheel key down the pointer cannot reach a second file at all and letting
+            // go is the only way to get it back. Ending here would make merging by
+            // touchpad impossible, so it hands over to the clickable form instead --
+            // the same handover that picking a folder already does.
+            watcher.WheelKeyReleased -= onReleased;
+
+            Log.Write("wheel key let go with nothing picked: handing over to the tick");
+
+            _hint?.Anchor(Caption(0), Mark());
+        };
         onConfirmed = (_, _) => Take();
         onAccepted = (_, _) => Take();
         onBack = (_, _) => Leave(WaitEnd.Back);
@@ -898,7 +958,12 @@ public partial class App : Application
             });
         };
 
+        // Space and Alt can be taken up and let go in the middle of picking, so the mark
+        // on the label follows them rather than being decided once at the start.
+        onModifiers = (_, _) => _hint?.Mark(Mark());
+
         watcher.Waiting = true;
+        watcher.ModifiersChanged += onModifiers;
         watcher.WheelKeyReleased += onReleased;
         watcher.ConfirmRequested += onConfirmed;
         watcher.BackRequested += onBack;
@@ -915,8 +980,8 @@ public partial class App : Application
         _hint ??= new CursorHintWindow();
         _hint.Accepted += onAccepted;
 
-        if (keyHeld) _hint.Follow("Select files", ModeGlyphs.Page);
-        else _hint.Anchor("Select files", ModeGlyphs.Page);
+        if (keyHeld) _hint.Follow(Caption(0), Mark());
+        else _hint.Anchor(Caption(0), Mark());
 
         // Light up the file it all started from. The drag that got here left Explorer's
         // selection wherever the drop put it, and the first thing the user needs to see

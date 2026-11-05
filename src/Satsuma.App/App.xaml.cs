@@ -728,14 +728,22 @@ public partial class App : Application
 
         return answered.Task;
     }
-
     /// <summary>
-    /// Waits for the answer to "which folder", which is whichever one is selected when
-    /// Space comes up, or none.
+    /// Waits for the answer to "which folder".
     ///
-    /// Returns the folder's path, or null for "make me one". Space is already down when
-    /// this starts -- that is what got us here -- so there is nothing to press, only
-    /// something to let go of, and what is selected at that moment is the answer.
+    /// Space being down at the drop is what starts this, and used to be what finished
+    /// it too: let go and Satsuma read whatever was selected. That cannot work on a
+    /// laptop. Windows suppresses precision-touchpad movement while any key is held --
+    /// accidental activation prevention, on by default -- so the pointer is frozen for
+    /// exactly as long as Space is down, and the one thing the user is being asked to
+    /// do is move it to a folder. Swallowing the key in the hook does not help; the
+    /// suppression is keyed off the keyboard, not off who ends up handling it.
+    ///
+    /// So letting go hands over rather than finishing. If a folder is already selected
+    /// -- which is the mouse user, who could point at one -- that is the answer and
+    /// nothing changes for them. If not, the label stops following the pointer, grows a
+    /// tick, and waits: now the pointer moves, a folder can be clicked, and Enter or
+    /// the tick confirms. Esc cancels and the back key returns to the wheel.
     /// </summary>
     private Task<(WaitEnd End, string? Folder)> WaitForFolderAsync(
         IReadOnlyList<SourceFile> starting, IntPtr source)
@@ -757,8 +765,11 @@ public partial class App : Application
             starting.Select(file => file.Path), StringComparer.OrdinalIgnoreCase);
 
         var window = source;
+        var handedOver = false;
 
         EventHandler? onReleased = null;
+        EventHandler? onConfirmed = null;
+        EventHandler? onAccepted = null;
         EventHandler? onBack = null;
         EventHandler? onCancelled = null;
         EventHandler<DragModifierEvent>? onClicked = null;
@@ -772,17 +783,39 @@ public partial class App : Application
         {
             watcher.Waiting = false;
             watcher.SpaceReleased -= onReleased;
+            watcher.ConfirmRequested -= onConfirmed;
             watcher.BackRequested -= onBack;
             watcher.Cancelled -= onCancelled;
             watcher.ClickedWhileWaiting -= onClicked;
+
+            if (_hint is not null) _hint.Accepted -= onAccepted;
 
             giveUp?.Stop();
             _hint?.Dismiss();
         }
 
-        onReleased = (_, _) =>
+        // Reads what is selected now and finishes with it, folder or not.
+        void Finish()
         {
             Stop();
+
+            Task.Run(async () =>
+            {
+                // Long enough for a last click to have become a selection.
+                await Task.Delay(140).ConfigureAwait(false);
+
+                var selected = await Core.Tools.StaExecutor
+                    .RunAsync(() => ShellSelection.FromWindow(window))
+                    .ConfigureAwait(false);
+
+                await Dispatcher.BeginInvoke(() =>
+                    answered.TrySetResult((WaitEnd.Done, FolderIn(selected))));
+            });
+        }
+
+        onReleased = (_, _) =>
+        {
+            if (handedOver) return;
 
             Task.Run(async () =>
             {
@@ -793,9 +826,30 @@ public partial class App : Application
                     .ConfigureAwait(false);
 
                 await Dispatcher.BeginInvoke(() =>
-                    answered.TrySetResult((WaitEnd.Done, FolderIn(selected))));
+                {
+                    if (handedOver || !watcher.Waiting) return;
+
+                    var folder = FolderIn(selected);
+
+                    // Already pointing at one: that was the whole gesture.
+                    if (folder is not null)
+                    {
+                        Stop();
+                        answered.TrySetResult((WaitEnd.Done, folder));
+                        return;
+                    }
+
+                    // Nothing chosen yet, and now the pointer is free to choose.
+                    handedOver = true;
+
+                    giveUp?.Stop();
+                    _hint?.Anchor("Pick a folder", ModeGlyphs.Folder);
+                });
             });
         };
+
+        onConfirmed = (_, _) => Finish();
+        onAccepted = (_, _) => Finish();
 
         onBack = (_, _) =>
         {
@@ -834,22 +888,28 @@ public partial class App : Application
 
         watcher.Waiting = true;
         watcher.SpaceReleased += onReleased;
+        watcher.ConfirmRequested += onConfirmed;
         watcher.BackRequested += onBack;
         watcher.Cancelled += onCancelled;
         watcher.ClickedWhileWaiting += onClicked;
 
-        // A key-up that never arrives -- an elevated window taking focus mid-gesture is
-        // enough -- would otherwise leave this waiting for good.
+        _hint ??= new CursorHintWindow();
+        _hint.Accepted += onAccepted;
+        _hint.Follow("Pick a folder", ModeGlyphs.Folder);
+
+        // Only while the key is still down. A key-up that never arrives -- an elevated
+        // window taking focus mid-gesture is enough -- would otherwise leave this
+        // waiting for good. Once the label is anchored there is no stuck key to guard
+        // against, and the user is allowed to take as long as they like.
         giveUp = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
         giveUp.Tick += (_, _) =>
         {
             Stop();
-            answered.TrySetResult((WaitEnd.Done, null));
+
+            // Cancel rather than quietly inventing a folder nobody asked for.
+            answered.TrySetResult((WaitEnd.Cancelled, null));
         };
         giveUp.Start();
-
-        _hint ??= new CursorHintWindow();
-        _hint.Follow("Pick a folder", ModeGlyphs.Folder);
 
         return answered.Task;
     }

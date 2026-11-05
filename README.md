@@ -71,8 +71,13 @@ so you can see which one you are in before you drop.
 
 - **Space** — somewhere else. After the drop, keep holding it and select a folder in
   Explorer; let go, and the results go into whatever folder is selected. Let go having
-  selected none and Satsuma makes one, named for what it did. A label at the pointer
-  says which it will be.
+  selected none and the label stops following the pointer and grows a tick: now you can
+  move freely, click a folder, and press **Enter** or the tick. Confirm with nothing
+  selected and Satsuma makes a folder, named for what it did.
+
+  Letting go has to hand over rather than finish, because Windows freezes a precision
+  touchpad while any key is held -- so on a laptop the pointer cannot reach a folder
+  while Space is down.
 - **Alt** — over the original. The original goes to the Recycle Bin and the result takes
   its name. Where a delete would not reach the bin, like a network share, the original is
   kept and Satsuma says so instead of destroying it quietly.

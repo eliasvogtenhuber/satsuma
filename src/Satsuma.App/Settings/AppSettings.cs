@@ -140,6 +140,19 @@ public sealed class AppSettings
     [JsonIgnore]
     public bool FirstRun { get; private set; }
 
+    /// <summary>
+    /// Whether Satsuma has ever put itself into startup.
+    ///
+    /// Separate from <see cref="RunAtLogin"/>, and separate from being a first run,
+    /// because neither answers the question that matters: has the user been asked. A
+    /// settings file written before any of this existed says RunAtLogin is false, which
+    /// is indistinguishable from having turned it off -- so upgrading from an older
+    /// Satsuma would have meant never starting with Windows and no way to find out why.
+    /// A missing field reads as false, so those installs register once and then leave
+    /// the decision alone.
+    /// </summary>
+    public bool StartupOffered { get; set; }
+
     public static AppSettings Load()
     {
         try

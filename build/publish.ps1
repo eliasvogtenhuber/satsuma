@@ -124,8 +124,10 @@ USING IT
 
   Held through to the end of the gesture:
 
-      Space     put the results somewhere else. Let go after dropping and Satsuma
-                makes a folder for them; keep holding and select one instead.
+      Space     put the results somewhere else. Keep holding it and select a folder;
+                let go and the label stops following the pointer and grows a tick, so
+                you can move freely. Enter or the tick confirms. With nothing selected,
+                Satsuma makes a folder.
 
       Alt       replace the original. It goes to the Recycle Bin, and the result
                 takes its name.

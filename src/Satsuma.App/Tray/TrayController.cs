@@ -184,8 +184,10 @@ public sealed class TrayController : IDisposable
             $"    {Describe(_settings.BackKey)}   back out of a question and show the wheel again\n" +
             "    Esc   or right-click, to cancel\n\n" +
             "HOLD THESE THROUGH TO THE END OF THE GESTURE\n\n" +
-            "    Space   put the results somewhere else. Let go after dropping and\n" +
-            "            Satsuma makes a folder; keep holding and select one instead.\n\n" +
+            "    Space   put the results somewhere else. Keep holding it and select a\n" +
+            "            folder; let go and the label waits with a tick, so the pointer\n" +
+            "            is free. Enter or the tick confirms, and with nothing selected\n" +
+            "            Satsuma makes a folder.\n\n" +
             "    Alt     replace the original. It goes to the Recycle Bin and the\n" +
             "            result takes its name.\n\n" +
             "Holding either shows a small mark, so you can see which you are in before " +
@@ -264,8 +266,12 @@ public sealed class TrayController : IDisposable
 
         if (registered is null)
         {
-            if (!_settings.FirstRun) return;
+            // Asked once, ever. Not once per fresh install: somebody upgrading from a
+            // Satsuma that predates this has a settings file already, and keying it to
+            // a first run meant they never got startup and never found out why.
+            if (_settings.StartupOffered) return;
 
+            _settings.StartupOffered = true;
             SetStartup(true);
 
             Notify("Satsuma is running",

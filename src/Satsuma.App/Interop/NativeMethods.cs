@@ -239,6 +239,13 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
 
+    /// <summary>Which process owns a window.</summary>
+    internal static uint GetWindowProcessId(IntPtr hWnd)
+    {
+        GetWindowThreadProcessId(hWnd, out var processId);
+        return processId;
+    }
+
     /// <summary>
     /// The control with keyboard focus inside another process's window.
     ///

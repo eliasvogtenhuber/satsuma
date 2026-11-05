@@ -119,6 +119,7 @@ public partial class App : Application
             TryProbeSelection(e.Args);
             TryShowPreview(e.Args);
             TryShelf(e.Args);
+            TryHint(e.Args);
         }, DispatcherPriority.Normal);
 
         _closeAfterDrag = new DispatcherTimer
@@ -268,6 +269,37 @@ public partial class App : Application
 
         Log.Write("--shelf: filled again");
         ShowShelf(new[] { new SourceFile(path) });
+    }
+
+    /// <summary>
+    /// <c>--hint</c> anchors the label and changes its caption a few times.
+    ///
+    /// The label cannot be clicked from a test, and the bug worth catching is that it
+    /// moves when it should not: an anchored label that re-places itself on every
+    /// caption change slides out from under the finger pressing its tick. The log says
+    /// where it went each time.
+    /// </summary>
+    private async void TryHint(IReadOnlyList<string> args)
+    {
+        if (!args.Any(a => a.Equals("--hint", StringComparison.OrdinalIgnoreCase))) return;
+
+        _hint ??= new CursorHintWindow();
+
+        Log.Write("--hint: anchoring");
+        _hint.Anchor("Select files", ModeGlyphs.Page);
+
+        foreach (var caption in new[] { "2 files", "3 files", "Select files", "4 files" })
+        {
+            await Task.Delay(500);
+
+            Log.Write($"--hint: saying '{caption}'");
+            _hint.Say(caption);
+        }
+
+        await Task.Delay(800);
+
+        Log.Write("--hint: done");
+        _hint.Dismiss();
     }
 
     private void TryShowPreview(IReadOnlyList<string> args)
@@ -602,6 +634,10 @@ public partial class App : Application
         // they merge in that order; plain-click a fourth and it replaces all three,
         // because that is what a plain click did to the selection.
         var order = new List<string>();
+
+        // Rises with every click, so a read that comes back after a newer one has
+        // already been applied can tell that it is out of date and keep quiet.
+        var latest = 0;
         var subjects = new HashSet<string>(
             starting.Select(file => file.Path), StringComparer.OrdinalIgnoreCase);
 
@@ -649,7 +685,9 @@ public partial class App : Application
         void Take()
         {
             // Unwired before the read, so a second trigger arriving during it cannot
-            // start another one.
+            // start another one. The ticket moves too, so any click's read that is
+            // still in flight cannot rewrite the order underneath this final one.
+            latest++;
             Stop();
 
             Task.Run(async () =>
@@ -686,7 +724,9 @@ public partial class App : Application
         onClicked = (_, click) =>
         {
             if (click.SourceWindow != IntPtr.Zero) window = click.SourceWindow;
+
             var reading = window;
+            var ticket = ++latest;
 
             Task.Run(async () =>
             {
@@ -699,6 +739,11 @@ public partial class App : Application
                 await Dispatcher.BeginInvoke(() =>
                 {
                     if (!watcher.Waiting) return;
+
+                    // Each click starts its own delayed read, so a quick second click
+                    // can have its answer overtaken by the first one's -- which then
+                    // rewrites the order from a selection that is already history.
+                    if (ticket != latest) return;
 
                     var count = WithSelected(selected).Count;
                     _hint?.Say(count > starting.Count ? $"{count} files" : "Select files");

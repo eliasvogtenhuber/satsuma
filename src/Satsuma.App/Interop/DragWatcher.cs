@@ -316,6 +316,13 @@ public sealed class DragWatcher : IDisposable
                         var where = data.pt;
                         var window = GetAncestor(WindowFromPoint(where), GA_ROOT);
 
+                        // A click on one of Satsuma's own surfaces is not an answer to
+                        // "which file": the tick on the label is the clearest case, and
+                        // treating it as a pick meant reading a selection that had not
+                        // changed and redrawing the label -- out from under the finger
+                        // that was pressing it.
+                        if (IsOurs(window)) break;
+
                         Log.Write($"click while waiting at {where.X},{where.Y}");
                         Post(() => ClickedWhileWaiting?.Invoke(this,
                             new DragModifierEvent(WheelKind.Formats,
@@ -607,6 +614,14 @@ public sealed class DragWatcher : IDisposable
 
     /// <summary>True when the window in front is Explorer or the Desktop.</summary>
     private static bool OverShell() => IsShellWindow(GetForegroundWindow());
+
+    /// <summary>True for a window belonging to Satsuma itself.</summary>
+    private static bool IsOurs(IntPtr window)
+    {
+        if (window == IntPtr.Zero) return false;
+
+        return GetWindowProcessId(window) == (uint)Environment.ProcessId;
+    }
 
     /// <summary>
     /// Whether this Space press is Satsuma's to take.

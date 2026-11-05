@@ -57,6 +57,8 @@ public partial class CursorHintWindow : Window
     /// </summary>
     public void Follow(string caption, Geometry? glyph)
     {
+        _anchor = null;
+
         Fill(caption, glyph);
         Accept.Visibility = Visibility.Collapsed;
 
@@ -74,9 +76,15 @@ public partial class CursorHintWindow : Window
     /// </summary>
     public void Anchor(string caption, Geometry? glyph)
     {
+        _anchor = null;
+
         Fill(caption, glyph);
         Accept.Visibility = Visibility.Visible;
         Tick.Data = ModeGlyphs.Tick;
+
+        // Measure again: Fill's pass ran before the tick was visible, so the first
+        // placement came out a row taller than every later one.
+        UpdateLayout();
 
         _follow.Stop();
         SetClickThrough(false);
@@ -87,12 +95,27 @@ public partial class CursorHintWindow : Window
     }
 
     /// <summary>Changes the words without moving the label or losing the mode.</summary>
+    /// <summary>
+    /// Changes the words without moving an anchored label.
+    ///
+    /// It used to re-place itself at the pointer whenever the caption changed, which
+    /// made the tick impossible to click: pressing it starts a selection read, the
+    /// read comes back a moment later and changes the count, and the label jumped to
+    /// sit beside the pointer -- so the button was no longer under the finger that was
+    /// still on its way up. The anchored label stays exactly where it was put, and
+    /// only grows rightward as the text gets longer.
+    /// </summary>
     public void Say(string caption)
     {
+        if (Caption.Text == caption) return;
+
         Caption.Text = caption;
         UpdateLayout();
 
-        if (!_follow.IsEnabled) PlaceAtCursor();
+        if (_follow.IsEnabled) return;
+        if (_anchor is not { } spot) return;
+
+        PlaceAt(spot.X, spot.Y);
     }
 
     public void Dismiss()
@@ -144,6 +167,26 @@ public partial class CursorHintWindow : Window
             left = Math.Clamp(left, work.Left, Math.Max(work.Left, work.Right - width));
             top = Math.Clamp(top, work.Top, Math.Max(work.Top, work.Bottom - height));
         }
+
+        if (!_follow.IsEnabled) _anchor = (left, top);
+
+        PlaceAt(left, top);
+    }
+
+    /// <summary>Where an anchored label was put, so it can be left there.</summary>
+    private (int X, int Y)? _anchor;
+
+    private void PlaceAt(int left, int top)
+    {
+        var scale = DpiAt(new POINT(left, top)) / 96.0;
+        var width = (int)Math.Round(ActualWidth * scale);
+        var height = (int)Math.Round(ActualHeight * scale);
+
+        if (width <= 0 || height <= 0) return;
+
+        Diagnostics.Log.Write(
+            $"hint: '{Caption.Text}' at {left},{top} {width}x{height} " +
+            (_follow.IsEnabled ? "following" : "anchored"));
 
         WindowPlacement.Apply(
             new WindowInteropHelper(this).Handle,

@@ -283,7 +283,17 @@ public sealed class TrayController : IDisposable
             // after that took the early return above and never tried again. Whatever
             // the write fails on -- policy, a locked hive, a bad moment -- it gets
             // another go next time rather than being remembered as done.
-            if (SetStartup(true)) _settings.StartupOffered = true;
+            // Saved here, not left to SetStartup: that saves before this flag is set,
+            // so setting it afterwards without saving again left it false on disk. The
+            // entry existing hid that, because a run that finds one never reads the
+            // flag -- until somebody turned startup off from the tray, when a false
+            // flag reads as "never offered" and the next run would put it straight
+            // back, overriding the one decision this flag exists to remember.
+            if (SetStartup(true))
+            {
+                _settings.StartupOffered = true;
+                _settings.Save();
+            }
 
             Notify("Satsuma is running",
                 "It lives in the tray and will start with Windows. " +

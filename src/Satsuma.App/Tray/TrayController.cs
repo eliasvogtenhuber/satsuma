@@ -264,15 +264,26 @@ public sealed class TrayController : IDisposable
 
         var registered = RegisteredPath();
 
+        Log.Write($"startup: entry={(registered ?? "none")} offered={_settings.StartupOffered}");
+
         if (registered is null)
         {
             // Asked once, ever. Not once per fresh install: somebody upgrading from a
             // Satsuma that predates this has a settings file already, and keying it to
             // a first run meant they never got startup and never found out why.
-            if (_settings.StartupOffered) return;
+            if (_settings.StartupOffered)
+            {
+                Log.Write("startup: already offered once, leaving it alone");
+                return;
+            }
 
-            _settings.StartupOffered = true;
-            SetStartup(true);
+            // Marked only once the entry is really there. Setting it first meant a
+            // single failed write closed this gate for good: the setting said Satsuma
+            // had put itself into startup, the registry said otherwise, and every run
+            // after that took the early return above and never tried again. Whatever
+            // the write fails on -- policy, a locked hive, a bad moment -- it gets
+            // another go next time rather than being remembered as done.
+            if (SetStartup(true)) _settings.StartupOffered = true;
 
             Notify("Satsuma is running",
                 "It lives in the tray and will start with Windows. " +
@@ -293,30 +304,64 @@ public sealed class TrayController : IDisposable
         }
     }
 
-    private void SetStartup(bool enabled)
+    /// <summary>
+    /// Writes or removes the Run entry, and says in the log what it did.
+    ///
+    /// It used to say nothing at all. Both of the ways it can decline -- no writable Run
+    /// key, no process path -- were bare returns, and the throwing case only raised a
+    /// balloon, which is gone in seconds and easy to be away from. So a Satsuma that
+    /// never registered itself looked exactly like one that had, until somebody
+    /// restarted their machine days later and found it absent. There is no excuse for a
+    /// step this short being invisible.
+    /// </summary>
+    /// <summary>Returns whether the registry now says what was asked for.</summary>
+    private bool SetStartup(bool enabled)
     {
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
-            if (key is null) return;
+
+            if (key is null)
+            {
+                Log.Write($"startup: {RunKey} would not open for writing");
+                return false;
+            }
 
             if (enabled)
             {
                 var exe = Environment.ProcessPath;
-                if (exe is null) return;
+
+                if (exe is null)
+                {
+                    Log.Write("startup: no process path to register");
+                    return false;
+                }
+
                 key.SetValue(RunValue, $"\"{exe}\"");
+                Log.Write($"startup: registered {exe}");
             }
             else
             {
                 key.DeleteValue(RunValue, throwOnMissingValue: false);
+                Log.Write("startup: entry removed");
             }
 
             _settings.RunAtLogin = enabled;
             _settings.Save();
+
+            // Read back rather than assumed. Writing the value and saving the setting are
+            // two different things that can fail apart from each other, and the one that
+            // decides whether Satsuma comes back is the registry.
+            var landed = RegisteredPath();
+            Log.Write($"startup: now {(landed is null ? "not registered" : landed)}");
+
+            return enabled ? landed is not null : landed is null;
         }
         catch (Exception ex)
         {
+            Log.Write($"startup failed: {ex.GetType().Name}: {ex.Message}");
             Notify("Could not change startup", ex.Message, isError: true);
+            return false;
         }
     }
 

@@ -409,7 +409,47 @@ public sealed class DragWatcher : IDisposable
         }
     }
 
+    /// <summary>
+    /// The hooks, wrapped so that nothing thrown inside one can end the process.
+    ///
+    /// These run on a thread of their own, and an exception on it was fatal and silent:
+    /// no notification, no trace, and on a machine that writes no Windows error reports,
+    /// no record anywhere. Satsuma died mid-drag that way and was simply absent when it
+    /// was next reached for. A hook that throws now loses that one event and the gesture
+    /// it belonged to, which is a bad moment rather than a dead app, and says so in a
+    /// file that outlives the run.
+    ///
+    /// Passing the event on afterwards matters as much as surviving: a hook that returns
+    /// without calling the next one in the chain eats the click for every other
+    /// application on the machine.
+    /// </summary>
     private IntPtr MouseHookProc(int code, IntPtr wParam, IntPtr lParam)
+    {
+        try
+        {
+            return MouseHookBody(code, wParam, lParam);
+        }
+        catch (Exception ex)
+        {
+            Log.Keep($"mouse hook threw: {ex}");
+            return CallNextHookEx(_mouseHook, code, wParam, lParam);
+        }
+    }
+
+    private IntPtr KeyboardHookProc(int code, IntPtr wParam, IntPtr lParam)
+    {
+        try
+        {
+            return KeyboardHookBody(code, wParam, lParam);
+        }
+        catch (Exception ex)
+        {
+            Log.Keep($"keyboard hook threw: {ex}");
+            return CallNextHookEx(_keyboardHook, code, wParam, lParam);
+        }
+    }
+
+    private IntPtr MouseHookBody(int code, IntPtr wParam, IntPtr lParam)
     {
         if (code >= 0)
         {
@@ -592,7 +632,7 @@ public sealed class DragWatcher : IDisposable
         return CallNextHookEx(_mouseHook, code, wParam, lParam);
     }
 
-    private IntPtr KeyboardHookProc(int code, IntPtr wParam, IntPtr lParam)
+    private IntPtr KeyboardHookBody(int code, IntPtr wParam, IntPtr lParam)
     {
         if (code >= 0)
         {

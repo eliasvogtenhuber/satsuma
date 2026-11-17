@@ -66,4 +66,57 @@ public static class Log
             // Tracing must never be the thing that breaks a run.
         }
     }
+
+    /// <summary>
+    /// Records something that must be recorded whether or not tracing was asked for,
+    /// appended to a file of its own that survives the next run.
+    ///
+    /// The trace log is opt-in and starts clean every run, which is right for tracing
+    /// and useless for a death: nobody is running with --debug when the thing they did
+    /// not expect happens, and the next start would wipe it anyway. Satsuma went missing
+    /// for three days with no crash record of any kind -- this machine writes no Windows
+    /// error reports either -- and the only honest conclusion was that it had died
+    /// somewhere invisible. Once is enough for that.
+    /// </summary>
+    public static void Keep(string message)
+    {
+        try
+        {
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Satsuma");
+
+            Directory.CreateDirectory(directory);
+
+            var path = Path.Combine(directory, "crashes.log");
+
+            lock (Gate)
+            {
+                // Trimmed when it gets silly, oldest first, so this cannot grow without
+                // limit on a machine where something fails every few minutes.
+                if (File.Exists(path) && new FileInfo(path).Length > 256 * 1024)
+                {
+                    var kept = File.ReadAllLines(path);
+                    File.WriteAllLines(path, kept.Skip(kept.Length / 2), Encoding.UTF8);
+                }
+
+                File.AppendAllText(
+                    path,
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  {message}{Environment.NewLine}",
+                    Encoding.UTF8);
+            }
+        }
+        catch (Exception)
+        {
+            // Still never the thing that breaks a run.
+        }
+
+        // Also in the trace, where somebody watching a repro will be looking.
+        Write(message);
+    }
+
+    /// <summary>Where <see cref="Keep"/> writes, for telling a user where to look.</summary>
+    public static string CrashPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Satsuma", "crashes.log");
 }

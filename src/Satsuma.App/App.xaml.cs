@@ -64,6 +64,26 @@ public partial class App : Application
 
         DispatcherUnhandledException += OnUnhandledException;
 
+        // The dispatcher handler above only ever covered the UI thread, which is not
+        // where most of Satsuma runs. The input hooks have a thread of their own, and
+        // an exception there took the whole process down with no notification, no log
+        // line and -- on a machine that writes no Windows error reports -- no record
+        // anywhere at all. Satsuma simply was not running the next time it was reached
+        // for, three days later, and nothing could say why.
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            Log.Keep($"fatal on {Thread.CurrentThread.ManagedThreadId}: " +
+                     $"{args.ExceptionObject}");
+        };
+
+        // A faulted task nobody awaited is swallowed by default. Quiet, but it hides
+        // the conversion that failed for a reason worth knowing.
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            Log.Keep($"unobserved: {args.Exception}");
+            args.SetObserved();
+        };
+
         _settings = AppSettings.Load();
         _runner = new JobRunner();
 
@@ -122,6 +142,7 @@ public partial class App : Application
             TryHint(e.Args);
             TryHighlight(e.Args);
             TryDuplicate(e.Args);
+            TryCrash(e.Args);
         }, DispatcherPriority.Normal);
 
         _closeAfterDrag = new DispatcherTimer
@@ -451,6 +472,25 @@ public partial class App : Application
         }
 
         Log.Write("--dupe: done");
+    }
+
+    /// <summary>
+    /// --crash: throws on a thread nobody is watching, which is how Satsuma used to
+    /// disappear.
+    ///
+    /// The process still ends -- a fatal exception cannot be talked out of it from
+    /// inside -- but it must no longer end in silence. What this checks is that the
+    /// record gets written and survives the next start, because the whole reason three
+    /// days went by without an explanation is that nothing was written down.
+    /// </summary>
+    private void TryCrash(IReadOnlyList<string> args)
+    {
+        if (!args.Any(a => a.Equals("--crash", StringComparison.OrdinalIgnoreCase))) return;
+
+        Log.Keep("--crash: about to throw on a background thread");
+
+        new Thread(() => throw new InvalidOperationException(
+            "deliberate failure from --crash")) { IsBackground = false }.Start();
     }
 
     private void TryShowPreview(IReadOnlyList<string> args)
